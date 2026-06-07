@@ -4,190 +4,177 @@
 
 ## 项目简介
 
-SiYuan Git Sync 是一个专为思源笔记设计的 Git 同步插件，支持将笔记内容自动或手动同步到 GitHub 仓库，实现笔记的版本控制和多设备同步。
+SiYuan Git Sync 是一个专为[思源笔记](https://b3log.org/siyuan)设计的同步插件，支持将笔记自动或手动同步到 GitHub 仓库，实现版本控制和多设备同步。
 
 ## 功能特性
 
-- **GitHub 仓库同步**：支持将笔记同步到指定的 GitHub 仓库
-- **自动/手动同步模式**：可选择自动定时同步或手动触发同步
-- **覆盖本地功能**：支持将本地文件完全替换为仓库中的版本
-- **多目录同步**：支持同时同步多个笔记目录
-- **自定义提交信息**：支持使用模板和日期占位符自定义提交信息
-- **自动关闭对话框**：执行同步或覆盖操作后可自动关闭配置页面
-- **友好的用户界面**：提供直观的配置界面和操作反馈
+- **GitHub 仓库同步**：将笔记推送到指定 GitHub 仓库
+- **智能差异对比**：本地计算 Git blob SHA，跳过未变更文件，大幅减少 API 请求
+- **批量提交**：所有变更打包为一次 Git commit（基于 Git Database API）
+- **自动/手动同步**：定时自动同步或手动触发
+- **多目录支持**：同时同步多个笔记目录
+- **覆盖本地**：用远程仓库版本覆盖本地文件
+- **自定义提交信息**：支持 `{{date}}` 占位符模板
+- **全平台国际化**：支持中英文，兼容 Windows / macOS / Linux
+
+## 同步原理
+
+插件使用 GitHub 的 **Git Database API** 实现高效批量操作：
+
+1. **获取远端文件树** — 2 次 API 拿到所有远端文件及其 SHA 值
+2. **本地并行计算 SHA** — 使用 `PromiseLimitPool` 5 并发遍历本地文件，通过 Web Crypto API 计算 Git blob SHA-1
+3. **差异对比** — 本地 SHA 与远端 SHA 逐一比对，相同的跳过
+4. **批量提交** — 变更文件上传为 blob，创建 tree → commit → 更新 ref，一次推送
+
+*100 个文件其中 10 个变更：约 205 次 API → 约 13 次 API（减少 93%）*
 
 ## 安装方法
 
-### 方法一：从集市安装
+### 从集市安装
 
 1. 打开思源笔记
 2. 进入「集市」→「插件」
 3. 搜索「Git Sync」并点击「安装」
 4. 安装完成后点击「启用」
 
-### 方法二：手动安装
+### 手动安装
 
-1. 从 [GitHub Releases](https://github.com/Ceysen/siyuan-git-sync/releases) 下载最新的 `package.zip` 文件
-2. 将下载的文件解压到思源笔记的插件目录 `{workspace}/data/plugins/`
+1. 从 [GitHub Releases](https://github.com/Ceysen/siyuan-git-sync/releases) 下载最新 `package.zip`
+2. 解压到 `{workspace}/data/plugins/`
 3. 重启思源笔记
-4. 进入「设置」→「插件」启用该插件
+4. 进入「设置」→「插件」启用
 
 ## 使用指南
 
-### 配置 Git 同步
+### 配置同步
 
-1. 点击思源笔记顶部栏右侧的插件图标（可选择固定到顶部栏），在下方找到本插件
-
-2. 在弹出的配置对话框中填写以下信息：
-
-   - **GitHub 仓库地址**：填写你的 GitHub 仓库 HTTPS 地址（例如：`https://github.com/username/repo.git`）
-   - **分支名称**：填写你要同步的分支名称（例如：`main`）
-   - **Personal Access Token**：填写你的 GitHub Personal Access Token，需要有 push 权限
-   - **默认 Commit 信息模板**：填写提交信息模板，可使用 `{{date}}` 占位符自动生成日期
-   - **笔记目录**：填写要同步的笔记目录，多个目录用英文逗号分隔
-   - **同步模式**：选择「自动同步」或「手动同步」
-   - **自动同步间隔**：当选择自动同步时，设置同步间隔（分钟）
-   - **点击同步或覆盖后自动关闭页面**：勾选后操作完成会自动关闭配置页面
-
-3. 点击「保存配置」按钮保存设置
-
-### 手动同步
-
-在手动同步模式下：
-
-1. 打开 Git 同步配置对话框
-2. 点击「手动同步」按钮开始同步
-3. 等待同步完成，会显示同步结果
-
-### 覆盖本地
-
-当需要将本地文件替换为仓库中的版本时：
-
-1. 打开 Git 同步配置对话框
-2. 点击「覆盖本地」按钮
-3. 阅读警告信息并确认操作
-4. 等待覆盖完成，会显示覆盖结果
-
-## 配置说明
-
-### 必选配置项
+点击顶部栏插件图标，填写：
 
 | 配置项 | 说明 | 示例 |
 |-------|------|------|
-| GitHub 仓库地址 | 要同步的 GitHub 仓库 HTTPS 地址 | `https://github.com/username/repo.git` |
-| 分支名称 | 要同步的仓库分支 | `main` |
-| Personal Access Token | GitHub 个人访问令牌，需要有 push 权限 | `ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| 默认 Commit 信息模板 | 提交信息模板，支持 `{{date}}` 占位符 | `同步笔记更新：{{date}}` |
-| 笔记目录 | 要同步的笔记目录，多个目录用英文逗号分隔 | `20260101104218-ma2fdmz` 或 `20260101104218-ma2fdmz,20260102104218-xyz123` |
+| GitHub 仓库地址 | 仓库 HTTPS 地址 | `https://github.com/user/repo.git` |
+| 分支名称 | 目标分支 | `main` |
+| Personal Access Token | 具有 `repo` 权限的令牌 | `ghp_xxx` |
+| Commit 信息模板 | 支持 `{{date}}` 占位符 | `同步笔记更新：{{date}}` |
+| 笔记目录 | 逗号分隔（自动加 `/data/` 前缀） | `20240101-abc` 或 `dir1,dir2` |
+| 同步模式 | 自动或手动 | `manual` |
+| 自动同步间隔 | 分钟（仅自动模式） | `30` |
+| 自动关闭页面 | 操作完成后关闭对话框 | `false` |
 
-### 可选配置项
+点击「保存配置」。
+
+### 手动同步
+
+手动模式下，打开配置对话框点击「手动同步」。结果会显示 `上传/删除/跳过/失败` 统计。
+
+### 覆盖本地
+
+点击「覆盖本地」将远端所有文件覆盖到本地。**此操作不可逆**，请提前备份重要数据。
+
+## 配置说明
+
+### 必选
+
+| 配置项 | 说明 |
+|-------|------|
+| GitHub 仓库地址 | HTTPS 仓库 URL |
+| 分支名称 | 同步分支 |
+| Personal Access Token | 需 `repo` 权限 |
+| Commit 信息模板 | 支持 `{{date}}` |
+| 笔记目录 | 逗号分隔，自动加 `/data/` 前缀 |
+
+### 可选
 
 | 配置项 | 说明 | 默认值 |
 |-------|------|--------|
-| 同步模式 | 选择同步模式：自动或手动 | `manual` |
-| 自动同步间隔 | 自动同步的时间间隔（分钟） | - |
-| 点击同步或覆盖后自动关闭页面 | 操作完成后是否自动关闭配置页面 | `false` |
+| 同步模式 | `auto` 或 `manual` | `manual` |
+| 自动同步间隔 | 分钟（≥1） | — |
+| 自动关闭页面 | 操作后关闭对话框 | `false` |
 
 ## 注意事项
 
-1. **关于 Personal Access Token**：
-   - 需要在 GitHub 设置中创建个人访问令牌
-   - 创建时需要勾选 `repo` 权限
-   - 请妥善保管你的访问令牌，不要分享给他人
-
-2. **关于自动同步**：
-   - 为避免笔记内容冲突，建议只在单台电脑上启用自动同步
-   - 如果在多台设备上同时开启自动同步，可能会导致同步冲突和数据丢失
-
-3. **关于覆盖本地**：
-   - 覆盖本地操作会将本地文件完全替换为仓库中的版本
-   - 所有本地修改将会丢失，请确保已备份重要数据
-   - 此操作不可逆，请谨慎使用
-
-4. **关于同步目录**：
-   - 插件会自动添加 `/data/` 前缀到配置的目录路径
-   - 会默认检查并提交 `assets` 文件夹
+1. **PAT 令牌**：在 GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens 创建，授予 **Contents: Read and write**。
+2. **自动同步**：建议只在单台电脑上启用，避免多设备冲突。
+3. **覆盖本地**：不可逆操作，请提前备份。
+4. **同步目录**：插件自动添加 `/data/` 前缀，始终检查并同步 `assets` 目录。
 
 ## 常见问题
 
-### Q: 同步失败怎么办？
+### 同步失败？
 
-**A:** 请检查以下几点：
-- GitHub 仓库地址是否正确
-- Personal Access Token 是否有效且有 push 权限
-- 网络连接是否正常
-- 笔记目录是否存在且格式正确
+- 检查仓库地址和分支名
+- 确认 Token 有效且有 push 权限
+- 检查网络连接
 
-### Q: 自动同步不工作怎么办？
+### 自动同步不工作？
 
-**A:** 请检查以下几点：
-- 是否选择了「自动同步」模式
-- 是否设置了大于 0 的同步间隔
-- 思源笔记是否一直在运行（后台运行也可以）
-- 网络连接是否稳定
+- 确认选择了「自动同步」
+- 确认间隔 ≥ 1 分钟
+- 保持思源笔记运行
 
-### Q: 覆盖本地后笔记丢失怎么办？
+### 覆盖后笔记丢失？
 
-**A:** 覆盖本地操作是不可逆的，建议：
-- 在执行覆盖操作前备份重要笔记
-- 如果已经执行了覆盖操作，可以尝试从 GitHub 仓库的历史提交中恢复
+- 可从 GitHub 提交历史中恢复
+- 操作前务必备份
 
 ## 开发指南
 
 ### 环境要求
 
-- Node.js 16.0+
-- pnpm 7.0+
+- Node.js 18+
+- pnpm 8+
 
-### 开发步骤
+### 本地开发
 
-1. 克隆项目到本地
-   ```bash
-   git clone https://github.com/Ceysen/siyuan-git-sync.git
-   cd siyuan-git-sync
-   ```
+```bash
+git clone https://github.com/Ceysen/siyuan-git-sync.git
+cd siyuan-git-sync
+pnpm install
+```
 
-2. 安装依赖
-   ```bash
-   pnpm install
-   ```
+### 快速开发（自动部署）
 
-3. 创建符号链接
-   ```bash
-   pnpm run make-link
-   ```
-   > Windows 用户请运行 `pnpm run make-link-win`
+创建 `.env` 文件：
 
-4. 启动开发服务器
-   ```bash
-   pnpm run dev
-   ```
+```env
+VITE_SIYUAN_WORKSPACE_PATH=/path/to/your/siyuan/workspace
+```
 
-5. 构建生产版本
-   ```bash
-   pnpm run build
-   ```
+```bash
+pnpm run dev    # 监听模式，自动部署到插件目录
+```
+
+### 手动开发
+
+```bash
+pnpm run make-link    # 创建符号链接到工作空间
+pnpm run dev          # 监听模式
+```
+
+### 构建
+
+```bash
+pnpm run build        # 输出到 dist/，同时生成 package.zip
+```
 
 ## 贡献指南
 
-欢迎提交 Issue 和 Pull Request 来帮助改进这个插件！
+欢迎提交 Issue 和 PR。提交前请确保：
 
-### 提交 PR 前请确保：
-
-1. 代码符合项目的代码风格
-2. 运行了 `pnpm run build` 确保构建成功
-3. 测试了功能是否正常工作
-4. 更新了相关的文档（如果需要）
+1. 代码符合项目风格
+2. 运行 `pnpm run build` 无错误
+3. 手动测试功能正常
+4. 必要时更新文档
 
 ## 许可证
 
-本项目采用 [MIT License](https://github.com/Ceysen/siyuan-git-sync/blob/main/LICENSE) 开源协议。
+[MIT License](https://github.com/Ceysen/siyuan-git-sync/blob/main/LICENSE)
 
 ## 联系方式
 
-- GitHub: [Ceysen/siyuan-git-sync](https://github.com/Ceysen/siyuan-git-sync.git)
-- 问题反馈：[Issues](https://github.com/Ceysen/siyuan-git-sync/issues)
+- [GitHub 仓库](https://github.com/Ceysen/siyuan-git-sync)
+- [问题反馈](https://github.com/Ceysen/siyuan-git-sync/issues)
 
 ---
 
-**感谢使用 SiYuan Git Sync 插件！** 希望它能帮助你更好地管理和同步你的笔记。
+**感谢使用 SiYuan Git Sync 插件！**
