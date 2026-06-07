@@ -1,161 +1,167 @@
-import { resolve } from "path"
+import { resolve } from "node:path"
 import { defineConfig, loadEnv } from "vite"
 import { viteStaticCopy } from "vite-plugin-static-copy"
 import livereload from "rollup-plugin-livereload"
-import zipPack from "vite-plugin-zip-pack";
-import fg from 'fast-glob';
+import zipPack from "vite-plugin-zip-pack"
+import fg from 'fast-glob'
 
-import vitePluginYamlI18n from './yaml-plugin';
+import vitePluginYamlI18n from './yaml-plugin'
+import { readFileSync } from "node:fs"
 
-const env = process.env;
-const isSrcmap = env.VITE_SOURCEMAP === 'inline';
-const isDev = env.NODE_ENV === 'development';
+const pluginInfo = JSON.parse(readFileSync("./plugin.json", "utf8"))
 
-const outputDir = isDev ? "dev" : "dist";
+export default defineConfig(({ mode }) => {
+    const env = loadEnv(mode, process.cwd())
+    const {
+        VITE_SIYUAN_WORKSPACE_PATH,
+    } = env
 
-console.log("isDev=>", isDev);
-console.log("isSrcmap=>", isSrcmap);
-console.log("outputDir=>", outputDir);
+    const siyuanWorkspacePath = VITE_SIYUAN_WORKSPACE_PATH
+    const isWatch = mode === 'development'
 
-export default defineConfig({
-    resolve: {
-        alias: {
-            "@": resolve(__dirname, "src"),
-        }
-    },
+    let devDistDir = './dev'
+    if (siyuanWorkspacePath) {
+        devDistDir = `${siyuanWorkspacePath}/data/plugins/${pluginInfo.name}`
+    }
+    const distDir = isWatch ? devDistDir : "./dist"
 
-    plugins: [
+    console.log("mode=>", mode)
+    console.log("isWatch=>", isWatch)
+    console.log("distDir=>", distDir)
 
-        vitePluginYamlI18n({
-            inDir: 'public/i18n',
-            outDir: `${outputDir}/i18n`
-        }),
-
-        viteStaticCopy({
-            targets: [
-                { src: "./README*.md", dest: "./" },
-                { src: "./plugin.json", dest: "./" },
-                { src: "./preview.png", dest: "./" },
-                { src: "./icon.png", dest: "./" }
-            ],
-        }),
-
-    ],
-
-    define: {
-        "process.env.DEV_MODE": JSON.stringify(isDev),
-        "process.env.NODE_ENV": JSON.stringify(env.NODE_ENV)
-    },
-
-    build: {
-        outDir: outputDir,
-        emptyOutDir: false,
-        minify: true,
-        sourcemap: isSrcmap ? 'inline' : false,
-
-        lib: {
-            entry: resolve(__dirname, "src/index.ts"),
-            fileName: "index",
-            formats: ["cjs"],
+    return {
+        resolve: {
+            alias: {
+                "@": resolve(__dirname, "src"),
+            }
         },
-        rollupOptions: {
-            plugins: [
-                ...(isDev ? [
-                    livereload(outputDir),
-                    {
-                        name: 'watch-external',
-                        async buildStart() {
-                            const files = await fg([
-                                'public/i18n/**',
-                                './README*.md',
-                                './plugin.json'
-                            ]);
-                            for (let file of files) {
-                                this.addWatchFile(file);
+
+        plugins: [
+            vitePluginYamlI18n({
+                inDir: 'public/i18n',
+                outDir: `${distDir}/i18n`
+            }),
+
+            viteStaticCopy({
+                targets: [
+                    { src: "./README*.md", dest: "./" },
+                    { src: "./plugin.json", dest: "./" },
+                    { src: "./preview.png", dest: "./" },
+                    { src: "./icon.png", dest: "./" }
+                ],
+            }),
+        ],
+
+        define: {
+            "process.env.DEV_MODE": JSON.stringify(isWatch),
+            "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV)
+        },
+
+        build: {
+            outDir: distDir,
+            emptyOutDir: !isWatch,
+            minify: !isWatch,
+            sourcemap: isWatch ? 'inline' : false,
+
+            lib: {
+                entry: resolve(__dirname, "src/index.ts"),
+                fileName: "index",
+                formats: ["cjs"],
+            },
+            rollupOptions: {
+                plugins: [
+                    ...(isWatch ? [
+                        livereload(distDir),
+                        {
+                            name: 'watch-external',
+                            async buildStart() {
+                                const files = await fg([
+                                    'public/i18n/**',
+                                    './README*.md',
+                                    './plugin.json'
+                                ])
+                                for (const file of files) {
+                                    this.addWatchFile(file)
+                                }
                             }
                         }
-                    }
-                ] : [
-                    // Clean up unnecessary files under dist dir
-                    cleanupDistFiles({
-                        patterns: ['i18n/*.yaml', 'i18n/*.md'],
-                        distDir: outputDir
-                    }),
-                    zipPack({
-                        inDir: './dist',
-                        outDir: './',
-                        outFileName: 'package.zip'
-                    })
-                ])
-            ],
+                    ] : [
+                        // Clean up unnecessary files under dist dir
+                        cleanupDistFiles({
+                            patterns: ['i18n/*.yaml', 'i18n/*.md'],
+                            distDir: distDir
+                        }),
+                        zipPack({
+                            inDir: './dist',
+                            outDir: './',
+                            outFileName: 'package.zip'
+                        })
+                    ])
+                ],
 
-            external: ["siyuan", "process"],
+                external: ["siyuan", "process"],
 
-            output: {
-                entryFileNames: "[name].js",
-                assetFileNames: (assetInfo) => {
-                    if (assetInfo.name === "style.css") {
-                        return "index.css"
-                    }
-                    return assetInfo.name
+                output: {
+                    entryFileNames: "[name].js",
+                    assetFileNames: (assetInfo) => {
+                        if (assetInfo.name === "style.css") {
+                            return "index.css"
+                        }
+                        return assetInfo.name
+                    },
                 },
             },
-        },
+        }
     }
-});
+})
 
 
 /**
  * Clean up some dist files after compiled
- * @author frostime
  * @param options:
- * @returns 
+ * @returns
  */
 function cleanupDistFiles(options: { patterns: string[], distDir: string }) {
     const {
         patterns,
         distDir
-    } = options;
+    } = options
 
     return {
         name: 'rollup-plugin-cleanup',
-        enforce: 'post',
+        enforce: 'post' as const,
         writeBundle: {
             sequential: true,
-            order: 'post' as 'post',
+            order: 'post' as const,
             async handler() {
-                const fg = await import('fast-glob');
-                const fs = await import('fs');
-                // const path = await import('path');
+                const fg = await import('fast-glob')
+                const fs = await import('node:fs')
 
-                // 使用 glob 语法，确保能匹配到文件
-                const distPatterns = patterns.map(pat => `${distDir}/${pat}`);
-                console.debug('Cleanup searching patterns:', distPatterns);
+                const distPatterns = patterns.map(pat => `${distDir}/${pat}`)
+                console.debug('Cleanup searching patterns:', distPatterns)
 
                 const files = await fg.default(distPatterns, {
                     dot: true,
                     absolute: true,
                     onlyFiles: false
-                });
-
-                // console.info('Files to be cleaned up:', files);
+                })
 
                 for (const file of files) {
                     try {
                         if (fs.default.existsSync(file)) {
-                            const stat = fs.default.statSync(file);
+                            const stat = fs.default.statSync(file)
                             if (stat.isDirectory()) {
-                                fs.default.rmSync(file, { recursive: true });
+                                fs.default.rmSync(file, { recursive: true })
                             } else {
-                                fs.default.unlinkSync(file);
+                                fs.default.unlinkSync(file)
                             }
-                            console.log(`Cleaned up: ${file}`);
+                            console.log(`Cleaned up: ${file}`)
                         }
                     } catch (error) {
-                        console.error(`Failed to clean up ${file}:`, error);
+                        console.error(`Failed to clean up ${file}:`, error)
                     }
                 }
             }
         }
-    };
+    }
 }

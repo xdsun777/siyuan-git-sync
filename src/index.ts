@@ -14,13 +14,6 @@ import {
 import "./index.scss";
 import { IMenuItem } from "siyuan/types";
 
-// 扩展Window接口，添加autoSyncTimer属性
-declare global {
-    interface Window {
-        autoSyncTimer: NodeJS.Timeout | null;
-    }
-}
-
 
 import { SettingUtils } from "./libs/setting-utils";
 import { GitConfigDialog } from "@/components/GitConfigDialog";

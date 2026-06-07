@@ -1,5 +1,6 @@
 /**
  * GitHub API 工具函数
+ * 通过浏览器原生 fetch 直连 GitHub API（桌面端 Electron 环境无 CORS 限制）
  */
 
 import { RepoInfo, FileExistsResult, RemoteFilesResult, GitHubFileResponse, GitHubCommitResponse, GitHubTreeResponse } from "@/types";
@@ -22,25 +23,27 @@ export function extractOwnerAndRepo(url: string): RepoInfo | null {
 }
 
 /**
+ * 获取标准的 GitHub API 请求头
+ */
+function getAuthHeaders(token: string): Record<string, string> {
+    return {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+    };
+}
+
+/**
  * 检查文件是否存在于远程仓库
- * @param owner 仓库所有者
- * @param repo 仓库名称
- * @param branch 分支名称
- * @param filePath 文件路径
- * @param token GitHub Personal Access Token
- * @returns 文件存在状态和 SHA 值
  */
 export async function checkFileExistsInRemote(owner: string, repo: string, branch: string, filePath: string, token: string): Promise<FileExistsResult> {
     try {
         const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`;
         const response = await fetch(apiUrl, {
             method: 'GET',
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json'
-            }
+            headers: getAuthHeaders(token),
         });
-        
+
         if (response.status === 200) {
             const data = await response.json() as GitHubFileResponse;
             return {
@@ -53,7 +56,7 @@ export async function checkFileExistsInRemote(owner: string, repo: string, branc
                 sha: null
             };
         } else {
-            throw new Error(`API 请求失败: ${response.statusText}`);
+            throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
         }
     } catch (error) {
         console.error(`检查文件 ${filePath} 失败:`, error);
@@ -66,41 +69,28 @@ export async function checkFileExistsInRemote(owner: string, repo: string, branc
 
 /**
  * 上传文件到远程仓库
- * @param owner 仓库所有者
- * @param repo 仓库名称
- * @param branch 分支名称
- * @param filePath 文件路径
- * @param content 文件内容（base64 编码）
- * @param token GitHub Personal Access Token
- * @param sha 文件的 SHA 值（如果文件已存在）
- * @param commitMessage 提交信息
- * @returns 是否上传成功
  */
 export async function uploadFileToRemote(owner: string, repo: string, branch: string, filePath: string, content: string, token: string, sha: string | null = null, commitMessage: string): Promise<boolean> {
     try {
         const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
-        
-        const payload = {
+
+        const payload: any = {
             message: commitMessage,
             content: content,
             branch: branch
         };
-        
+
         // 如果文件存在，添加 sha 参数
         if (sha) {
             payload.sha = sha;
         }
-        
+
         const response = await fetch(apiUrl, {
             method: 'PUT',
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json',
-                'Content-Type': 'application/json'
-            },
+            headers: getAuthHeaders(token),
             body: JSON.stringify(payload)
         });
-        
+
         if (response.status === 201 || response.status === 200) {
             return true;
         } else {
@@ -115,50 +105,39 @@ export async function uploadFileToRemote(owner: string, repo: string, branch: st
 
 /**
  * 收集远程仓库的文件列表
- * @param owner 仓库所有者
- * @param repo 仓库名称
- * @param branch 分支名称
- * @param token GitHub Personal Access Token
- * @returns 包含远程文件路径和 SHA 值的映射
  */
 export async function collectRemoteFiles(owner: string, repo: string, branch: string, token: string): Promise<RemoteFilesResult> {
     const remoteFiles = new Set<string>();
-    const remoteFileShas = new Map<string, string>(); // 存储文件路径到SHA值的映射
-    
+    const remoteFileShas = new Map<string, string>();
+
     try {
-        // 首先获取默认分支的最新提交
+        // 获取分支的最新提交
         const commitApiUrl = `https://api.github.com/repos/${owner}/${repo}/commits/${branch}`;
         const commitResponse = await fetch(commitApiUrl, {
             method: 'GET',
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json'
-            }
+            headers: getAuthHeaders(token),
         });
-        
+
         if (!commitResponse.ok) {
-            throw new Error(`获取最新提交失败: ${commitResponse.statusText}`);
+            throw new Error(`获取最新提交失败: ${commitResponse.status} ${commitResponse.statusText}`);
         }
-        
+
         const commitData = await commitResponse.json() as GitHubCommitResponse;
         const treeSha = commitData.sha;
-        
+
         // 使用 Git Trees API 获取文件树
         const treeApiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`;
         const treeResponse = await fetch(treeApiUrl, {
             method: 'GET',
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json'
-            }
+            headers: getAuthHeaders(token),
         });
-        
+
         if (!treeResponse.ok) {
-            throw new Error(`获取文件树失败: ${treeResponse.statusText}`);
+            throw new Error(`获取文件树失败: ${treeResponse.status} ${treeResponse.statusText}`);
         }
-        
+
         const treeData = await treeResponse.json() as GitHubTreeResponse;
-        
+
         if (treeData.tree && Array.isArray(treeData.tree)) {
             for (const item of treeData.tree) {
                 if (item.type === 'blob') {
@@ -168,9 +147,9 @@ export async function collectRemoteFiles(owner: string, repo: string, branch: st
             }
         }
     } catch (error) {
-        console.error(`获取远程文件列表失败:`, error);
+        console.error('获取远程文件列表失败:', error);
     }
-    
+
     return {
         remoteFiles,
         remoteFileShas
@@ -179,55 +158,37 @@ export async function collectRemoteFiles(owner: string, repo: string, branch: st
 
 /**
  * 删除远程仓库中的文件
- * @param owner 仓库所有者
- * @param repo 仓库名称
- * @param branch 分支名称
- * @param filesToDelete 要删除的文件列表
- * @param remoteFileShas 文件路径到 SHA 值的映射
- * @param token GitHub Personal Access Token
- * @param commitMessage 提交信息
  */
 export async function deleteRemoteFiles(owner: string, repo: string, branch: string, filesToDelete: string[], remoteFileShas: Map<string, string>, token: string, commitMessage: string): Promise<void> {
     try {
         if (filesToDelete.length === 0) {
-
             return;
         }
-        
 
-        
         // 逐个删除文件
         for (const filePath of filesToDelete) {
             const fileSha = remoteFileShas.get(filePath);
             if (!fileSha) {
-
                 continue;
             }
-            
+
             const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
-            
+
             const response = await fetch(apiUrl, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': `token ${token}`,
-                    'Accept': 'application/vnd.github.v3+json',
-                    'Content-Type': 'application/json'
-                },
+                headers: getAuthHeaders(token),
                 body: JSON.stringify({
                     message: commitMessage,
                     sha: fileSha,
                     branch: branch
                 })
             });
-            
-            if (response.status === 200) {
 
-            } else {
+            if (response.status !== 200) {
                 const errorData = await response.json();
                 console.error(`删除文件 ${filePath} 失败: ${errorData.message || response.statusText}`);
             }
         }
-        
 
     } catch (error) {
         console.error('删除远程文件失败:', error);
@@ -235,45 +196,46 @@ export async function deleteRemoteFiles(owner: string, repo: string, branch: str
 }
 
 /**
- * 下载远程文件
- * @param owner 仓库所有者
- * @param repo 仓库名称
- * @param branch 分支名称
- * @param filePath 文件路径
- * @param token GitHub Personal Access Token
- * @returns 文件内容
+ * 下载远程文件（返回原始字节）
+ * @returns base64 解码后的原始字节数据
  */
-export async function downloadRemoteFile(owner: string, repo: string, branch: string, filePath: string, token: string): Promise<string | null> {
+export async function downloadRemoteFile(owner: string, repo: string, branch: string, filePath: string, token: string): Promise<Uint8Array | null> {
     try {
         const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`;
         const response = await fetch(apiUrl, {
             method: 'GET',
-            headers: {
-                'Authorization': `token ${token}`,
-                'Accept': 'application/vnd.github.v3+json'
-            }
+            headers: getAuthHeaders(token),
         });
-        
+
         if (!response.ok) {
-            throw new Error(`下载文件失败: ${response.statusText}`);
+            throw new Error(`下载文件失败: ${response.status} ${response.statusText}`);
         }
-        
-        const data = await response.json() as GitHubFileResponse;
-        if (!data.content) {
+
+        const fileData = await response.json() as GitHubFileResponse;
+        if (!fileData.content) {
             throw new Error('文件内容为空');
         }
-        
-        // 解码 base64 内容并正确处理 UTF-8 编码
-        const binaryString = atob(data.content.replace(/\s/g, ''));
+
+        // 解码 base64 内容为原始字节
+        const binaryString = atob(fileData.content.replace(/\s/g, ''));
         const len = binaryString.length;
         const bytes = new Uint8Array(len);
         for (let i = 0; i < len; i++) {
             bytes[i] = binaryString.charCodeAt(i);
         }
-        const content = new TextDecoder('utf-8').decode(bytes);
-        return content;
+        return bytes;
     } catch (error) {
         console.error(`下载文件 ${filePath} 失败:`, error);
         return null;
     }
+}
+
+/**
+ * 下载远程文件并解码为文本
+ * @returns UTF-8 解码后的文本内容
+ */
+export async function downloadRemoteFileAsText(owner: string, repo: string, branch: string, filePath: string, token: string): Promise<string | null> {
+    const bytes = await downloadRemoteFile(owner, repo, branch, filePath, token);
+    if (!bytes) return null;
+    return new TextDecoder('utf-8').decode(bytes);
 }

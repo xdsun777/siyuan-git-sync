@@ -1,14 +1,9 @@
 import { Dialog, Plugin, showMessage } from "siyuan";
 import { readDir, getFileBlob, putFile, createDirectory } from "@/utils/siyuan";
 import { performSync } from "@/hooks/useGitSync";
+import { extractOwnerAndRepo, downloadRemoteFile, collectRemoteFiles } from "@/utils/github";
 import styles from "./GitConfigDialog.module.scss";
 
-// 扩展Window接口，添加autoSyncTimer属性
-declare global {
-    interface Window {
-        autoSyncTimer: NodeJS.Timeout | null;
-    }
-}
 
 export class GitConfigDialog {
     /**
@@ -274,18 +269,6 @@ export class GitConfigDialog {
                         }
                         
                         // 从仓库地址中提取 owner 和 repo
-                        function extractOwnerAndRepo(url: string) {
-                            // 匹配 HTTPS 格式：https://github.com/owner/repo.git
-                            const match = url.match(/https:\/\/github\.com\/(.*?)\/(.*?)\.git$/);
-                            if (match) {
-                                return {
-                                    owner: match[1],
-                                    repo: match[2]
-                                };
-                            }
-                            return null;
-                        }
-                        
                         const repoInfo = extractOwnerAndRepo(repositoryUrl);
                         if (!repoInfo) {
                             showMessage('GitHub 仓库地址格式不正确');
@@ -334,45 +317,18 @@ export class GitConfigDialog {
                             return mimeTypes[extension] || 'application/octet-stream';
                         }
                         
-                        // 下载远程文件
-                        async function downloadRemoteFile(filePath: string, fileSha: string) {
-                            try {
-                                const apiUrl = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/contents/${filePath}?ref=${branch}`;
-                                const response = await fetch(apiUrl, {
-                                    method: 'GET',
-                                    headers: {
-                                        'Authorization': `token ${authToken}`,
-                                        'Accept': 'application/vnd.github.v3+json'
-                                    }
-                                });
-                                
-                                if (!response.ok) {
-                                    throw new Error(`下载文件失败: ${response.statusText}`);
-                                }
-                                
-                                const data = await response.json();
-                                if (!data.content) {
-                                    throw new Error('文件内容为空');
-                                }
-                                
-                                // 解码 base64 内容
-                                const binaryString = atob(data.content.replace(/\s/g, ''));
-                                const len = binaryString.length;
-                                const bytes = new Uint8Array(len);
-                                for (let i = 0; i < len; i++) {
-                                    bytes[i] = binaryString.charCodeAt(i);
-                                }
-                                
-                                // 对于文本文件，返回字符串；对于二进制文件，返回 Uint8Array
-                                const mimeType = getMimeType(filePath);
-                                if (mimeType.startsWith('text/') || mimeType === 'application/json' || mimeType === 'text/yaml') {
-                                    return new TextDecoder('utf-8').decode(bytes);
-                                } else {
-                                    return bytes;
-                                }
-                            } catch (error) {
-                                console.error(`下载文件 ${filePath} 失败:`, error);
-                                return null;
+                        // 下载远程文件（支持文本和二进制）
+                        async function downloadRemoteFileWrapper(filePath: string, fileSha: string): Promise<string | Uint8Array | null> {
+                            // 复用已导入的 downloadRemoteFile 获取原始字节
+                            const bytes = await downloadRemoteFile(repoInfo.owner, repoInfo.repo, branch, filePath, authToken);
+                            if (bytes === null) return null;
+                            
+                            // 对于文本文件，解码为字符串；对于二进制文件，直接返回原始字节
+                            const mimeType = getMimeType(filePath);
+                            if (mimeType.startsWith('text/') || mimeType === 'application/json' || mimeType === 'text/yaml') {
+                                return new TextDecoder('utf-8').decode(bytes);
+                            } else {
+                                return bytes;
                             }
                         }
                         
@@ -414,99 +370,16 @@ export class GitConfigDialog {
                             }
                         }
                         
-                        // 创建目录结构
-                        async function createDirectory(dirPath: string) {
-                            try {
-                                // 分割目录路径
-                                const dirs = dirPath.split('/').filter(dir => dir !== '');
-                                let currentPath = '';
-                                
-                                // 逐个创建目录
-                                for (const dir of dirs) {
-                                    currentPath += `/${dir}`;
-                                    try {
-                                        // 检查目录是否存在
-                                        await readDir(currentPath);
-                                    } catch (error) {
-                                        // 目录不存在，创建它
-
-                                        // 使用putFile函数创建目录
-                                        await putFile(currentPath, true, null);
-                                    }
-                                }
-                            } catch (error) {
-                                console.error(`创建目录 ${dirPath} 失败:`, error);
-                                throw error;
-                            }
-                        }
-                        
-                        // 收集远程文件路径和SHA值
-                        const remoteFiles = new Set<string>();
-                        const remoteFileShas = new Map<string, string>(); // 存储文件路径到SHA值的映射
-                        
-                        // 使用 Git Trees API 一次性获取整个仓库的文件树
-                        async function collectRemoteFiles() {
-                            try {
-                                // 首先获取默认分支的最新提交
-                                const commitApiUrl = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/commits/${branch}`;
-                                const commitResponse = await fetch(commitApiUrl, {
-                                    method: 'GET',
-                                    headers: {
-                                        'Authorization': `token ${authToken}`,
-                                        'Accept': 'application/vnd.github.v3+json'
-                                    }
-                                });
-                                
-                                if (!commitResponse.ok) {
-                                    throw new Error(`获取最新提交失败: ${commitResponse.statusText}`);
-                                }
-                                
-                                const commitData = await commitResponse.json();
-                                const treeSha = commitData.sha;
-                                
-                                // 使用 Git Trees API 获取文件树
-                                const treeApiUrl = `https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/git/trees/${treeSha}?recursive=1`;
-                                const treeResponse = await fetch(treeApiUrl, {
-                                    method: 'GET',
-                                    headers: {
-                                        'Authorization': `token ${authToken}`,
-                                        'Accept': 'application/vnd.github.v3+json'
-                                    }
-                                });
-                                
-                                if (!treeResponse.ok) {
-                                    throw new Error(`获取文件树失败: ${treeResponse.statusText}`);
-                                }
-                                
-                                const treeData = await treeResponse.json();
-                                
-                                if (treeData.tree && Array.isArray(treeData.tree)) {
-                                    for (const item of treeData.tree) {
-                                        if (item.type === 'blob') {
-                                            remoteFiles.add(item.path);
-                                            remoteFileShas.set(item.path, item.sha);
-                                        }
-                                    }
-                                }
-                            } catch (error) {
-                                console.error(`获取远程文件列表失败:`, error);
-                            }
-                        }
-                        
-                        // 收集远程文件
-                        await collectRemoteFiles();
+                        // 使用导入的 collectRemoteFiles 获取远程文件列表
+                        const { remoteFiles, remoteFileShas } = await collectRemoteFiles(repoInfo.owner, repoInfo.repo, branch, authToken);
                         
                         // 下载并覆盖本地文件
-
-                        
                         let downloadedCount = 0;
                         let failedCount = 0;
                         
                         for (const filePath of remoteFiles) {
-
-                            
-                            // 下载远程文件
-                            const content = await downloadRemoteFile(filePath, remoteFileShas.get(filePath));
+                            // 下载远程文件（返回解码后的文本，二进制文件返回 Uint8Array）
+                            const content = await downloadRemoteFileWrapper(filePath, remoteFileShas.get(filePath));
                             if (!content) {
                                 console.error(`下载文件 ${filePath} 失败`);
                                 failedCount++;
@@ -516,7 +389,6 @@ export class GitConfigDialog {
                             // 写入本地文件
                             const writeResult = await writeLocalFile(filePath, content);
                             if (writeResult) {
-
                                 downloadedCount++;
                             } else {
                                 console.error(`写入文件 ${filePath} 失败`);

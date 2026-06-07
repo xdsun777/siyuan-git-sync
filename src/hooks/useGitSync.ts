@@ -137,33 +137,20 @@ export async function performSync(dialog: DialogElement): Promise<boolean> {
                     return null;
                 }
                 
-                // 检查是否为图片文件
-                const isImageFile = filePath.toLowerCase().endsWith('.png');
-                
-                if (isImageFile) {
-                    // 对于图片文件，使用FileReader读取二进制数据
-                    return new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            // 从Data URL中提取base64部分
-                            const base64Data = (reader.result as string).split(',')[1];
-                            resolve(base64Data);
-                        };
-                        reader.onerror = () => {
-                            reject(new Error('读取图片文件失败'));
-                        };
-                        reader.readAsDataURL(blob);
-                    });
-                } else {
-                    // 对于文本文件，保持现有的处理方式
-                    // 将Blob转换为文本
-                    const text = await blob.text();
-                    
-                    // 将文本转换为base64
-                    const base64Content = btoa(unescape(encodeURIComponent(text)));
-                    
-                    return base64Content;
-                }
+                // 统一使用 FileReader 读取所有类型文件（文本和二进制），
+                // 避免使用废弃的 unescape() 函数
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        // 从Data URL中提取base64部分
+                        const base64Data = (reader.result as string).split(',')[1];
+                        resolve(base64Data);
+                    };
+                    reader.onerror = () => {
+                        reject(new Error('读取文件失败'));
+                    };
+                    reader.readAsDataURL(blob);
+                });
             } catch (error) {
                 console.error(`读取文件 ${filePath} 失败:`, error);
                 return null;

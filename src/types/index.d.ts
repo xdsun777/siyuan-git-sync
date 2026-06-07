@@ -134,4 +134,6 @@ interface Window {
     emojis: any;
   };
   Lute: any;
+  /** 自动同步定时器（Git Sync 插件使用） */
+  autoSyncTimer: ReturnType<typeof setInterval> | null;
 }

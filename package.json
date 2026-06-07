@@ -1,11 +1,11 @@
 {
-  "name": "plugin-sample-vite",
-  "version": "0.4.1",
+  "name": "siyuan-git-sync",
+  "version": "0.0.3",
   "type": "module",
-  "description": "This is a sample plugin based on vite and svelte for Siyuan (https://b3log.org/siyuan)",
-  "repository": "https://github.com/frostime/plugin-sample-vite",
-  "homepage": "",
-  "author": "frostime",
+  "description": "Sync your SiYuan notes with Git",
+  "repository": "https://github.com/Ceysen/siyuan-git-sync",
+  "homepage": "https://github.com/Ceysen/siyuan-git-sync",
+  "author": "Ceysen",
   "license": "MIT",
   "scripts": {
     "dev": "cross-env NODE_ENV=development VITE_SOURCEMAP=inline vite build --watch",
