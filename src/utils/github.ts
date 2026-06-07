@@ -1,30 +1,16 @@
 /**
  * GitHub API 工具函数
- * 通过浏览器原生 fetch 直连 GitHub API（桌面端 Electron 环境无 CORS 限制）
+ * 桌面端 Electron 环境无 CORS 限制，直接 fetch 调用
  */
 
-import { RepoInfo, FileExistsResult, RemoteFilesResult, GitHubFileResponse, GitHubCommitResponse, GitHubTreeResponse } from "@/types";
+import {
+    RepoInfo, RemoteFilesResult,
+    GitHubFileResponse, GitHubCommitResponse, GitHubTreeResponse,
+    SyncStats, FileChange, RemoteTreeResult
+} from "@/types";
 
-/**
- * 从仓库地址提取 owner 和 repo
- * @param url GitHub 仓库地址
- * @returns 包含 owner 和 repo 的对象，失败返回 null
- */
-export function extractOwnerAndRepo(url: string): RepoInfo | null {
-    // 匹配 HTTPS 格式：https://github.com/owner/repo.git
-    const match = url.match(/https:\/\/github\.com\/(.*?)\/(.*?)\.git$/);
-    if (match) {
-        return {
-            owner: match[1],
-            repo: match[2]
-        };
-    }
-    return null;
-}
+/* ========== 基础工具 ========== */
 
-/**
- * 获取标准的 GitHub API 请求头
- */
 function getAuthHeaders(token: string): Record<string, string> {
     return {
         'Authorization': `token ${token}`,
@@ -33,196 +19,268 @@ function getAuthHeaders(token: string): Record<string, string> {
     };
 }
 
-/**
- * 检查文件是否存在于远程仓库
- */
-export async function checkFileExistsInRemote(owner: string, repo: string, branch: string, filePath: string, token: string): Promise<FileExistsResult> {
-    try {
-        const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`;
-        const response = await fetch(apiUrl, {
-            method: 'GET',
-            headers: getAuthHeaders(token),
-        });
+export function extractOwnerAndRepo(url: string): RepoInfo | null {
+    const match = url.match(/https:\/\/github\.com\/(.*?)\/(.*?)\.git$/);
+    if (match) return { owner: match[1], repo: match[2] };
+    return null;
+}
 
-        if (response.status === 200) {
-            const data = await response.json() as GitHubFileResponse;
-            return {
-                exists: true,
-                sha: data.sha
-            };
-        } else if (response.status === 404) {
-            return {
-                exists: false,
-                sha: null
-            };
-        } else {
-            throw new Error(`API 请求失败: ${response.status} ${response.statusText}`);
+/**
+ * 计算 Git blob SHA-1
+ * Git blob 格式: "blob <字节数>\0<内容>"
+ */
+export async function computeGitBlobSHA(content: Uint8Array): Promise<string> {
+    const header = new TextEncoder().encode(`blob ${content.length}\0`);
+    const combined = new Uint8Array(header.length + content.length);
+    combined.set(header);
+    combined.set(content, header.length);
+
+    const hashBuffer = await crypto.subtle.digest('SHA-1', combined);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* ========== 远端仓库查询（一次性获取全量文件树） ========== */
+
+/**
+ * 获取分支最新提交信息及递归文件树
+ * 返回: { commitSha, treeSha, files: Map<路径, sha>, truncated }
+ */
+export async function fetchRemoteTree(owner: string, repo: string, branch: string, token: string): Promise<RemoteTreeResult | null> {
+    try {
+        // 1. 获取分支最新 commit
+        const commitUrl = `https://api.github.com/repos/${owner}/${repo}/commits/${branch}`;
+        const commitResp = await fetch(commitUrl, { method: 'GET', headers: getAuthHeaders(token) });
+        if (!commitResp.ok) throw new Error(`获取提交失败: ${commitResp.status}`);
+        const commitData = await commitResp.json() as GitHubCommitResponse;
+
+        // 2. 递归获取文件树
+        const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${commitData.sha}?recursive=1`;
+        const treeResp = await fetch(treeUrl, { method: 'GET', headers: getAuthHeaders(token) });
+        if (!treeResp.ok) throw new Error(`获取文件树失败: ${treeResp.status}`);
+
+        const treeData = await treeResp.json() as GitHubTreeResponse;
+        const files = new Map<string, string>();
+        if (treeData.tree) {
+            for (const item of treeData.tree) {
+                if (item.type === 'blob') {
+                    files.set(item.path, item.sha);
+                }
+            }
         }
-    } catch (error) {
-        console.error(`检查文件 ${filePath} 失败:`, error);
+
         return {
-            exists: false,
-            sha: null
+            commitSha: commitData.sha,
+            treeSha: treeData.sha,
+            files,
+            truncated: treeData.truncated,
         };
+    } catch (error) {
+        console.error('获取远程文件树失败:', error);
+        return null;
+    }
+}
+
+/* ========== Git Database API：批量提交 ========== */
+
+/**
+ * 创建 Git blob 对象（上传文件内容）
+ */
+async function createBlob(owner: string, repo: string, content: string, token: string): Promise<string | null> {
+    try {
+        const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: getAuthHeaders(token),
+            body: JSON.stringify({ content, encoding: 'base64' }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.message || resp.statusText);
+        }
+        const data = await resp.json();
+        return data.sha;
+    } catch (error) {
+        console.error('创建 blob 失败:', error);
+        return null;
     }
 }
 
 /**
- * 上传文件到远程仓库
+ * 创建 Git tree
+ * @param treeItems 要新增/修改/删除的文件项
+ *   - 新增/修改: { path, mode: '100644', type: 'blob', sha }
+ *   - 删除:     { path, mode: '100644', type: 'blob', sha: null }
  */
-export async function uploadFileToRemote(owner: string, repo: string, branch: string, filePath: string, content: string, token: string, sha: string | null = null, commitMessage: string): Promise<boolean> {
+async function createTree(owner: string, repo: string, baseTreeSha: string, treeItems: GitTreeItem[], token: string): Promise<string | null> {
     try {
-        const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
-
-        const payload: any = {
-            message: commitMessage,
-            content: content,
-            branch: branch
-        };
-
-        // 如果文件存在，添加 sha 参数
-        if (sha) {
-            payload.sha = sha;
-        }
-
-        const response = await fetch(apiUrl, {
-            method: 'PUT',
+        const url = `https://api.github.com/repos/${owner}/${repo}/git/trees`;
+        const resp = await fetch(url, {
+            method: 'POST',
             headers: getAuthHeaders(token),
-            body: JSON.stringify(payload)
+            body: JSON.stringify({ base_tree: baseTreeSha, tree: treeItems }),
         });
-
-        if (response.status === 201 || response.status === 200) {
-            return true;
-        } else {
-            const errorData = await response.json();
-            throw new Error(`上传文件失败: ${errorData.message || response.statusText}`);
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.message || resp.statusText);
         }
+        const data = await resp.json();
+        return data.sha;
     } catch (error) {
-        console.error(`上传文件 ${filePath} 失败:`, error);
+        console.error('创建 tree 失败:', error);
+        return null;
+    }
+}
+
+/**
+ * 创建 commit
+ */
+async function createCommit(owner: string, repo: string, message: string, treeSha: string, parentSha: string, token: string): Promise<string | null> {
+    try {
+        const url = `https://api.github.com/repos/${owner}/${repo}/git/commits`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: getAuthHeaders(token),
+            body: JSON.stringify({ message, tree: treeSha, parents: [parentSha] }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.message || resp.statusText);
+        }
+        const data = await resp.json();
+        return data.sha;
+    } catch (error) {
+        console.error('创建 commit 失败:', error);
+        return null;
+    }
+}
+
+/**
+ * 更新分支引用
+ */
+async function updateRef(owner: string, repo: string, branch: string, commitSha: string, token: string): Promise<boolean> {
+    try {
+        const url = `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`;
+        const resp = await fetch(url, {
+            method: 'PATCH',
+            headers: getAuthHeaders(token),
+            body: JSON.stringify({ sha: commitSha, force: false }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.message || resp.statusText);
+        }
+        return true;
+    } catch (error) {
+        console.error('更新分支失败:', error);
         return false;
     }
 }
 
 /**
- * 收集远程仓库的文件列表
+ * 批量提交：将变更一次性推送到远端
+ * @returns 是否成功
  */
+export async function batchCommit(
+    owner: string, repo: string, branch: string, token: string,
+    changes: FileChange[], message: string,
+    onProgress?: (msg: string) => void
+): Promise<boolean> {
+    try {
+        // 1. 获取远端树
+        onProgress?.('获取远端文件列表...');
+        const remoteTree = await fetchRemoteTree(owner, repo, branch, token);
+        if (!remoteTree) return false;
+
+        // 2. 构建 tree items（并行上传 blob）
+        onProgress?.(`对比 ${changes.length} 个文件...`);
+        const treeItems: GitTreeItem[] = [];
+        const blobResults = await Promise.all(
+            changes.map(async (change) => {
+                const remoteSha = remoteTree.files.get(change.path);
+                const localSha = await computeGitBlobSHA(change.content);
+
+                // SHA 相同 → 跳过（不是删除）
+                if (remoteSha === localSha && change.action !== 'delete') {
+                    return null; // skipped
+                }
+
+                if (change.action === 'delete') {
+                    return { path: change.path, mode: '100644', type: 'blob', sha: null } as GitTreeItem;
+                }
+
+                // 上传 blob
+                const blobSha = await createBlob(owner, repo, change.base64, token);
+                if (!blobSha) return null;
+
+                return {
+                    path: change.path,
+                    mode: change.mode || '100644',
+                    type: 'blob',
+                    sha: blobSha,
+                } as GitTreeItem;
+            })
+        );
+
+        for (const item of blobResults) {
+            if (item) treeItems.push(item);
+        }
+
+        const skipped = changes.length - treeItems.length;
+        onProgress?.(`变更: ${treeItems.length} 个文件${skipped > 0 ? `，跳过 ${skipped} 个未改动文件` : ''}`);
+
+        if (treeItems.length === 0) {
+            onProgress?.('没有变更，无需提交');
+            return true;
+        }
+
+        // 3. 创建 tree
+        onProgress?.('创建 tree...');
+        const newTreeSha = await createTree(owner, repo, remoteTree.treeSha, treeItems, token);
+        if (!newTreeSha) return false;
+
+        // 4. 创建 commit
+        onProgress?.('创建 commit...');
+        const newCommitSha = await createCommit(owner, repo, message, newTreeSha, remoteTree.commitSha, token);
+        if (!newCommitSha) return false;
+
+        // 5. 更新分支
+        onProgress?.('推送...');
+        return await updateRef(owner, repo, branch, newCommitSha, token);
+
+    } catch (error) {
+        console.error('批量提交失败:', error);
+        return false;
+    }
+}
+
+/* ========== 覆写本地功能（保留兼容） ========== */
+
+/** 收集远程文件（供覆盖本地使用） */
 export async function collectRemoteFiles(owner: string, repo: string, branch: string, token: string): Promise<RemoteFilesResult> {
     const remoteFiles = new Set<string>();
     const remoteFileShas = new Map<string, string>();
-
-    try {
-        // 获取分支的最新提交
-        const commitApiUrl = `https://api.github.com/repos/${owner}/${repo}/commits/${branch}`;
-        const commitResponse = await fetch(commitApiUrl, {
-            method: 'GET',
-            headers: getAuthHeaders(token),
-        });
-
-        if (!commitResponse.ok) {
-            throw new Error(`获取最新提交失败: ${commitResponse.status} ${commitResponse.statusText}`);
+    const remoteTree = await fetchRemoteTree(owner, repo, branch, token);
+    if (remoteTree) {
+        for (const [path, sha] of remoteTree.files) {
+            remoteFiles.add(path);
+            remoteFileShas.set(path, sha);
         }
-
-        const commitData = await commitResponse.json() as GitHubCommitResponse;
-        const treeSha = commitData.sha;
-
-        // 使用 Git Trees API 获取文件树
-        const treeApiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`;
-        const treeResponse = await fetch(treeApiUrl, {
-            method: 'GET',
-            headers: getAuthHeaders(token),
-        });
-
-        if (!treeResponse.ok) {
-            throw new Error(`获取文件树失败: ${treeResponse.status} ${treeResponse.statusText}`);
-        }
-
-        const treeData = await treeResponse.json() as GitHubTreeResponse;
-
-        if (treeData.tree && Array.isArray(treeData.tree)) {
-            for (const item of treeData.tree) {
-                if (item.type === 'blob') {
-                    remoteFiles.add(item.path);
-                    remoteFileShas.set(item.path, item.sha);
-                }
-            }
-        }
-    } catch (error) {
-        console.error('获取远程文件列表失败:', error);
     }
-
-    return {
-        remoteFiles,
-        remoteFileShas
-    };
+    return { remoteFiles, remoteFileShas };
 }
 
-/**
- * 删除远程仓库中的文件
- */
-export async function deleteRemoteFiles(owner: string, repo: string, branch: string, filesToDelete: string[], remoteFileShas: Map<string, string>, token: string, commitMessage: string): Promise<void> {
-    try {
-        if (filesToDelete.length === 0) {
-            return;
-        }
-
-        // 逐个删除文件
-        for (const filePath of filesToDelete) {
-            const fileSha = remoteFileShas.get(filePath);
-            if (!fileSha) {
-                continue;
-            }
-
-            const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
-
-            const response = await fetch(apiUrl, {
-                method: 'DELETE',
-                headers: getAuthHeaders(token),
-                body: JSON.stringify({
-                    message: commitMessage,
-                    sha: fileSha,
-                    branch: branch
-                })
-            });
-
-            if (response.status !== 200) {
-                const errorData = await response.json();
-                console.error(`删除文件 ${filePath} 失败: ${errorData.message || response.statusText}`);
-            }
-        }
-
-    } catch (error) {
-        console.error('删除远程文件失败:', error);
-    }
-}
-
-/**
- * 下载远程文件（返回原始字节）
- * @returns base64 解码后的原始字节数据
- */
+/** 下载远程文件原始字节 */
 export async function downloadRemoteFile(owner: string, repo: string, branch: string, filePath: string, token: string): Promise<Uint8Array | null> {
     try {
-        const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`;
-        const response = await fetch(apiUrl, {
-            method: 'GET',
-            headers: getAuthHeaders(token),
-        });
-
-        if (!response.ok) {
-            throw new Error(`下载文件失败: ${response.status} ${response.statusText}`);
-        }
-
-        const fileData = await response.json() as GitHubFileResponse;
-        if (!fileData.content) {
-            throw new Error('文件内容为空');
-        }
-
-        // 解码 base64 内容为原始字节
-        const binaryString = atob(fileData.content.replace(/\s/g, ''));
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-        }
+        const url = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`;
+        const resp = await fetch(url, { method: 'GET', headers: getAuthHeaders(token) });
+        if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+        const data = await resp.json() as GitHubFileResponse;
+        if (!data.content) throw new Error('文件内容为空');
+        const binary = atob(data.content.replace(/\s/g, ''));
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         return bytes;
     } catch (error) {
         console.error(`下载文件 ${filePath} 失败:`, error);
@@ -230,12 +288,8 @@ export async function downloadRemoteFile(owner: string, repo: string, branch: st
     }
 }
 
-/**
- * 下载远程文件并解码为文本
- * @returns UTF-8 解码后的文本内容
- */
+/** 下载远程文件文本 */
 export async function downloadRemoteFileAsText(owner: string, repo: string, branch: string, filePath: string, token: string): Promise<string | null> {
     const bytes = await downloadRemoteFile(owner, repo, branch, filePath, token);
-    if (!bytes) return null;
-    return new TextDecoder('utf-8').decode(bytes);
+    return bytes ? new TextDecoder('utf-8').decode(bytes) : null;
 }

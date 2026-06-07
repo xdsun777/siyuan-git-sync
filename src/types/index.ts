@@ -20,6 +20,40 @@ export interface RemoteFilesResult {
     remoteFileShas: Map<string, string>;
 }
 
+// 远程文件树（优化后的一次性查询结果）
+export interface RemoteTreeResult {
+    commitSha: string;
+    treeSha: string;
+    files: Map<string, string>;   // path → sha
+    truncated: boolean;
+}
+
+// 文件变更项
+export interface FileChange {
+    path: string;
+    content: Uint8Array;
+    base64: string;
+    action: 'add' | 'update' | 'delete';
+    mode?: string;  // 默认 '100644'
+}
+
+// Git Tree API 的条目
+export interface GitTreeItem {
+    path: string;
+    mode: string;
+    type: 'blob';
+    sha: string | null;  // null 表示删除
+}
+
+// 同步统计
+export interface SyncStats {
+    total: number;
+    uploaded: number;
+    deleted: number;
+    skipped: number;
+    failed: number;
+}
+
 // 目录项
 export interface DirItem {
     name: string;
