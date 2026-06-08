@@ -7,6 +7,8 @@ import "./index.scss";
 
 import { SettingUtils } from "./libs/setting-utils";
 import { GitConfigDialog } from "@/components/GitConfigDialog";
+import { performSyncFromConfig } from "@/hooks/useGitSync";
+import { extractOwnerAndRepo } from "@/utils/github";
 
 const STORAGE_NAME = "menu-config";
 
@@ -62,11 +64,71 @@ export default class GitSyncPlugin extends Plugin {
         });
 
         this.settingUtils.load();
+
+        // 如果已保存自动同步配置，启动定时器
+        this.tryStartAutoSync();
     }
 
     async onunload() {
         console.log(this.i18n.banPlugin);
-        // 清理自动同步定时器
+        this.stopAutoSync();
+    }
+
+    /**
+     * 尝试从已保存配置启动自动同步
+     */
+    tryStartAutoSync() {
+        const config = this.data.gitSyncConfig?.gitConf;
+        if (!config || config.syncMode !== 'auto') return;
+        if (!config.repositoryUrl || !config.authToken || !config.workspaceDir) return;
+
+        const interval = config.syncInterval;
+        if (!interval || interval <= 0) return;
+
+        this.startAutoSync(interval);
+    }
+
+    /**
+     * 启动自动同步定时器
+     * 每次触发时从已保存配置读取最新设置
+     */
+    startAutoSync(intervalMinutes: number) {
+        this.stopAutoSync();
+
+        const ms = intervalMinutes * 60 * 1000;
+        window.autoSyncTimer = setInterval(async () => {
+            try {
+                const config = this.data.gitSyncConfig?.gitConf;
+                if (!config || config.syncMode !== 'auto') return;
+
+                const repoInfo = extractOwnerAndRepo(config.repositoryUrl);
+                if (!repoInfo) return;
+
+                const dirs = config.workspaceDir
+                    .replace(/^\/data\//, '')
+                    .split(',')
+                    .map(d => d.trim())
+                    .filter(d => d !== '');
+
+                showMessage("自动同步中");
+                const success = await performSyncFromConfig({
+                    repoInfo,
+                    branch: config.branch,
+                    authToken: config.authToken,
+                    commitTemplate: config.commitTemplate || "同步笔记更新：{{date}}",
+                    dirs,
+                });
+                if (success) showMessage('同步完成！');
+            } catch (error) {
+                console.error('自动同步失败:', error);
+            }
+        }, ms);
+    }
+
+    /**
+     * 停止自动同步定时器
+     */
+    stopAutoSync() {
         if (window.autoSyncTimer) {
             clearInterval(window.autoSyncTimer);
             window.autoSyncTimer = null;

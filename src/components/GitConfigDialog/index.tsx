@@ -393,43 +393,18 @@ export class GitConfigDialog {
                     
                     // 如果是自动同步模式，执行一次同步并设置定时器
                     if (syncMode === 'auto') {
-
-                        // 执行同步
+                        // 立即执行一次同步
                         showMessage("自动同步中");
                         const syncSuccess = await performSync(dialog);
                         if (syncSuccess) {
                             showMessage('同步完成！');
                         }
-                        
-                        // 设置自动同步定时器
-                        const syncIntervalMs = syncInterval * 60 * 1000; // 转换为毫秒
 
-                        
-                        // 清除可能存在的旧定时器
-                        if (window.autoSyncTimer) {
-                            clearInterval(window.autoSyncTimer);
-                        }
-                        
-                        // 设置新定时器
-                        window.autoSyncTimer = setInterval(async () => {
-                            try {
-                                showMessage("自动同步中");
-                                const syncSuccess = await performSync(dialog);
-                                if (syncSuccess) {
-                                    showMessage('同步完成！');
-                                }
-                            } catch (error) {
-                                console.error('自动同步失败:', error);
-                                // 可以选择显示错误消息，但为了避免打扰用户，这里只在控制台记录错误
-                            }
-                        }, syncIntervalMs);
+                        // 委托 plugin 管理自动同步定时器
+                        (plugin as any).startAutoSync(syncInterval);
                     } else {
                         // 手动同步模式，清除定时器
-                        if (window.autoSyncTimer) {
-                            clearInterval(window.autoSyncTimer);
-                            window.autoSyncTimer = null;
-
-                        }
+                        (plugin as any).stopAutoSync();
                     }
                     
                     // 关闭弹窗

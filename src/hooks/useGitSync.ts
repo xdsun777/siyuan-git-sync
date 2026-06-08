@@ -7,34 +7,23 @@ import PromiseLimitPool from "@/libs/promise-pool";
 /** 并发上传数 */
 const CONCURRENCY = 5;
 
+/** 同步配置（独立于 DOM） */
+export interface SyncConfigInput {
+    repoInfo: RepoInfo;
+    branch: string;
+    authToken: string;
+    commitTemplate: string;
+    dirs: string[];
+}
+
 /**
- * 执行同步操作（优化版）
- * 
- * 流程:
- *   1. 一次性获取远端全量文件 SHA
- *   2. 遍历本地文件，并行计算本地 Git blob SHA
- *   3. 本地 SHA vs 远端 SHA 对比，跳过未变更文件
- *   4. 将变更文件（新增/修改）+ 删除文件打包为一次 Git commit 推送
+ * 从配置对象执行同步（不依赖 DOM）
+ * 供自动同步定时器和手动同步共用
  */
-export async function performSync(dialog: DialogElement): Promise<boolean> {
-    const notesDir = (dialog.element.querySelector('#workspaceDir') as HTMLInputElement).value.trim();
-    if (!notesDir) { showMessage('请先填写笔记目录'); return false; }
+export async function performSyncFromConfig(config: SyncConfigInput): Promise<boolean> {
+    const { repoInfo, branch, authToken, commitTemplate, dirs } = config;
 
     try {
-        // 解析配置
-        const dirs = notesDir.split(',').map(d => d.trim()).filter(d => d !== '');
-
-        const repositoryUrl = (dialog.element.querySelector('#repositoryUrl') as HTMLInputElement).value.trim();
-        if (!repositoryUrl) { showMessage('请先填写 GitHub 仓库地址'); return false; }
-
-        const repoInfo = extractOwnerAndRepo(repositoryUrl);
-        if (!repoInfo) { showMessage('GitHub 仓库地址格式不正确'); return false; }
-
-        const branch = (dialog.element.querySelector('#branch') as HTMLInputElement).value.trim() || 'main';
-        const authToken = (dialog.element.querySelector('#authToken') as HTMLInputElement).value.trim();
-        if (!authToken) { showMessage('请先填写 Personal Access Token'); return false; }
-
-        const commitTemplate = (dialog.element.querySelector('#commitTemplate') as HTMLInputElement).value.trim() || "同步笔记更新：{{date}}";
         const commitMessage = commitTemplate.replace(/\{\{date\}\}/g, new Date().toLocaleString());
 
         // ──── 阶段 1: 获取远端全量文件 SHA（2 次 API）────
@@ -47,7 +36,7 @@ export async function performSync(dialog: DialogElement): Promise<boolean> {
 
         // ──── 阶段 2: 遍历本地目录，收集所有文件 ────
         const localFiles: Array<{ fullPath: string; relativePath: string }> = [];
-        const allDirs = [...dirs, 'assets'];  // 始终包含 assets
+        const allDirs = [...dirs, 'assets'];
 
         async function collectFiles(dirPath: string): Promise<void> {
             try {
@@ -92,23 +81,17 @@ export async function performSync(dialog: DialogElement): Promise<boolean> {
                     const blob = await getFileBlob(file.fullPath);
                     if (!blob) return null;
 
-                    // 读取文件原始字节
                     const arrayBuffer = await blob.arrayBuffer();
                     const content = new Uint8Array(arrayBuffer);
-
-                    // 计算本地 Git blob SHA
                     const localSha = await computeGitBlobSHA(content);
                     const remoteSha = remoteTree.files.get(file.relativePath);
 
-                    // SHA 相同 → 跳过
                     if (remoteSha === localSha) {
                         stats.skipped++;
                         return null;
                     }
 
-                    // 生成 base64（给 Git blob API 使用）
                     const base64 = await blobToBase64(blob);
-
                     stats.uploaded++;
                     return {
                         path: file.relativePath,
@@ -130,7 +113,6 @@ export async function performSync(dialog: DialogElement): Promise<boolean> {
         // ──── 阶段 3.5: 标记远端多余文件为删除 ────
         const localPaths = new Set(localFiles.map(f => f.relativePath));
         for (const [remotePath] of remoteTree.files) {
-            // 仅处理用户配置目录范围内的文件，避免误删仓库中其他文件
             const inScope = allDirs.some(dir => remotePath === dir || remotePath.startsWith(dir + '/'));
             if (!inScope) continue;
             if (!localPaths.has(remotePath)) {
@@ -179,8 +161,30 @@ export async function performSync(dialog: DialogElement): Promise<boolean> {
 }
 
 /**
- * Blob → base64 (strip data URL prefix)
+ * 从对话框 DOM 读取配置后执行同步
  */
+export async function performSync(dialog: DialogElement): Promise<boolean> {
+    const notesDir = (dialog.element.querySelector('#workspaceDir') as HTMLInputElement).value.trim();
+    if (!notesDir) { showMessage('请先填写笔记目录'); return false; }
+
+    const dirs = notesDir.split(',').map(d => d.trim()).filter(d => d !== '');
+
+    const repositoryUrl = (dialog.element.querySelector('#repositoryUrl') as HTMLInputElement).value.trim();
+    if (!repositoryUrl) { showMessage('请先填写 GitHub 仓库地址'); return false; }
+
+    const repoInfo = extractOwnerAndRepo(repositoryUrl);
+    if (!repoInfo) { showMessage('GitHub 仓库地址格式不正确'); return false; }
+
+    const branch = (dialog.element.querySelector('#branch') as HTMLInputElement).value.trim() || 'main';
+    const authToken = (dialog.element.querySelector('#authToken') as HTMLInputElement).value.trim();
+    if (!authToken) { showMessage('请先填写 Personal Access Token'); return false; }
+
+    const commitTemplate = (dialog.element.querySelector('#commitTemplate') as HTMLInputElement).value.trim() || "同步笔记更新：{{date}}";
+
+    return performSyncFromConfig({ repoInfo, branch, authToken, commitTemplate, dirs });
+}
+
+/** Blob → base64 (strip data URL prefix) */
 async function blobToBase64(blob: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -193,9 +197,7 @@ async function blobToBase64(blob: Blob): Promise<string> {
     });
 }
 
-/**
- * Git 同步逻辑钩子
- */
+/** Git 同步逻辑钩子 */
 export function useGitSync() {
-    return { performSync };
+    return { performSync, performSyncFromConfig };
 }
