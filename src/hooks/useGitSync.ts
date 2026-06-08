@@ -130,6 +130,9 @@ export async function performSync(dialog: DialogElement): Promise<boolean> {
         // ──── 阶段 3.5: 标记远端多余文件为删除 ────
         const localPaths = new Set(localFiles.map(f => f.relativePath));
         for (const [remotePath] of remoteTree.files) {
+            // 仅处理用户配置目录范围内的文件，避免误删仓库中其他文件
+            const inScope = allDirs.some(dir => remotePath === dir || remotePath.startsWith(dir + '/'));
+            if (!inScope) continue;
             if (!localPaths.has(remotePath)) {
                 changes.push({
                     path: remotePath,

@@ -4,6 +4,7 @@
  */
 
 import { fetchPost, fetchSyncPost, IWebSocketData } from "siyuan";
+import { getMimeType } from "@/utils/file";
 
 /**
  * 通用请求函数
@@ -124,5 +125,32 @@ export async function createDirectory(dirPath: string) {
     } catch (error) {
         console.error(`创建目录 ${dirPath} 失败:`, error);
         throw error;
+    }
+}
+
+/**
+ * 写入文件，自动创建父目录
+ * @param relativePath 相对于 /data/ 的文件路径，如 "20240101-abc/file.md"
+ * @param content 文件原始字节
+ */
+export async function writeFileWithDirs(relativePath: string, content: Uint8Array): Promise<boolean> {
+    try {
+        const localFilePath = `/data/${relativePath}`;
+
+        // 确保父目录存在
+        const dirPath = localFilePath.substring(0, localFilePath.lastIndexOf('/'));
+        try {
+            await readDir(dirPath);
+        } catch {
+            await createDirectory(dirPath);
+        }
+
+        const mimeType = getMimeType(relativePath);
+        const blob = new Blob([content as BlobPart], { type: mimeType });
+        await putFile(localFilePath, false, blob);
+        return true;
+    } catch (error) {
+        console.error(`写入文件 ${relativePath} 失败:`, error);
+        return false;
     }
 }

@@ -1,7 +1,6 @@
 import { showMessage } from "siyuan";
-import { readDir, putFile, createDirectory } from "@/utils/siyuan";
+import { writeFileWithDirs } from "@/utils/siyuan";
 import { extractOwnerAndRepo, fetchRemoteTree, downloadBlobBySha } from "@/utils/github";
-import { getMimeType } from "@/utils/file";
 import { DialogElement } from "@/types";
 import PromiseLimitPool from "@/libs/promise-pool";
 
@@ -89,7 +88,7 @@ export async function performOverride(dialog: DialogElement): Promise<boolean> {
         const writePool = new PromiseLimitPool<boolean>(CONCURRENCY);
         for (const file of downloadedFiles) {
             writePool.add(async () => {
-                const ok = await writeLocalFile(file.path, file.content);
+                const ok = await writeFileWithDirs(file.path, file.content);
                 return ok;
             });
         }
@@ -107,31 +106,6 @@ export async function performOverride(dialog: DialogElement): Promise<boolean> {
     } catch (error) {
         console.error('覆盖本地异常:', error);
         showMessage('覆盖本地失败');
-        return false;
-    }
-}
-
-/**
- * 将文件内容写入思源本地文件系统
- */
-async function writeLocalFile(filePath: string, content: Uint8Array): Promise<boolean> {
-    try {
-        const localFilePath = `/data/${filePath}`;
-
-        // 确保父目录存在
-        const dirPath = localFilePath.substring(0, localFilePath.lastIndexOf('/'));
-        try {
-            await readDir(dirPath);
-        } catch {
-            await createDirectory(dirPath);
-        }
-
-        const mimeType = getMimeType(filePath);
-        const blob = new Blob([content as BlobPart], { type: mimeType });
-        await putFile(localFilePath, false, blob);
-        return true;
-    } catch (error) {
-        console.error(`写入文件 ${filePath} 失败:`, error);
         return false;
     }
 }

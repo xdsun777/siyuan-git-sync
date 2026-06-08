@@ -1,7 +1,6 @@
 import { Dialog, showMessage } from "siyuan";
-import { readDir, getFileBlob, putFile, createDirectory } from "@/utils/siyuan";
+import { readDir, getFileBlob, writeFileWithDirs } from "@/utils/siyuan";
 import { extractOwnerAndRepo, fetchRemoteTree, downloadBlobBySha, computeGitBlobSHA } from "@/utils/github";
-import { getMimeType } from "@/utils/file";
 import { DialogElement } from "@/types";
 import PromiseLimitPool from "@/libs/promise-pool";
 
@@ -175,7 +174,7 @@ export async function performPullUpdate(dialog: DialogElement): Promise<boolean>
         const writePool = new PromiseLimitPool<boolean>(CONCURRENCY);
         for (const file of downloadedFiles) {
             writePool.add(async () => {
-                return await writeLocalFile(file.path, file.content);
+                return await writeFileWithDirs(file.path, file.content);
             });
         }
         const writeResults = await writePool.awaitAll();
@@ -191,28 +190,6 @@ export async function performPullUpdate(dialog: DialogElement): Promise<boolean>
     } catch (error) {
         console.error('拉取更新异常:', error);
         showMessage('拉取更新失败');
-        return false;
-    }
-}
-
-/**
- * 将文件内容写入思源本地文件系统
- */
-async function writeLocalFile(filePath: string, content: Uint8Array): Promise<boolean> {
-    try {
-        const localFilePath = `/data/${filePath}`;
-        const dirPath = localFilePath.substring(0, localFilePath.lastIndexOf('/'));
-        try {
-            await readDir(dirPath);
-        } catch {
-            await createDirectory(dirPath);
-        }
-        const mimeType = getMimeType(filePath);
-        const blob = new Blob([content as BlobPart], { type: mimeType });
-        await putFile(localFilePath, false, blob);
-        return true;
-    } catch (error) {
-        console.error(`写入文件 ${filePath} 失败:`, error);
         return false;
     }
 }
