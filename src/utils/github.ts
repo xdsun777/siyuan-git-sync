@@ -288,6 +288,24 @@ export async function downloadRemoteFile(owner: string, repo: string, branch: st
     }
 }
 
+/** 通过 blob SHA 直接下载文件内容（使用 Git Blob API，效率高于 Contents API） */
+export async function downloadBlobBySha(owner: string, repo: string, sha: string, token: string): Promise<Uint8Array | null> {
+    try {
+        const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs/${sha}`;
+        const resp = await fetch(url, { method: 'GET', headers: getAuthHeaders(token) });
+        if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+        const data = await resp.json();
+        if (!data.content) throw new Error('blob 内容为空');
+        const binary = atob(data.content.replace(/\s/g, ''));
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    } catch (error) {
+        console.error(`下载 blob ${sha} 失败:`, error);
+        return null;
+    }
+}
+
 /** 下载远程文件文本 */
 export async function downloadRemoteFileAsText(owner: string, repo: string, branch: string, filePath: string, token: string): Promise<string | null> {
     const bytes = await downloadRemoteFile(owner, repo, branch, filePath, token);

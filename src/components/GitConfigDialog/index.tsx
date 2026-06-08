@@ -1,7 +1,7 @@
 import { Dialog, Plugin, showMessage } from "siyuan";
-import { readDir, getFileBlob, putFile, createDirectory } from "@/utils/siyuan";
 import { performSync } from "@/hooks/useGitSync";
-import { extractOwnerAndRepo, downloadRemoteFile, collectRemoteFiles } from "@/utils/github";
+import { performOverride } from "@/hooks/useOverrideLocal";
+import { performPullUpdate } from "@/hooks/usePullUpdates";
 import styles from "./GitConfigDialog.module.scss";
 
 
@@ -73,6 +73,7 @@ export class GitConfigDialog {
                         <button id="saveConfig" class="b3-btn b3-btn--primary" style="margin-right: 8px;">保存配置</button>
                         <button id="manualSyncBtn" class="b3-btn" style="margin-right: 8px; display: none;">手动同步</button>
                         <button id="overrideLocalBtn" class="b3-btn" style="margin-right: 8px; display: none;">覆盖本地</button>
+                        <button id="pullUpdateBtn" class="b3-btn" style="margin-right: 8px; display: none;">拉取更新</button>
                         <button id="cancelConfig" class="b3-btn">取消</button>
                     </div>
                 </div>
@@ -231,175 +232,16 @@ export class GitConfigDialog {
             const overrideLocalBtn = dialog.element.querySelector('#overrideLocalBtn') as HTMLButtonElement;
             if (overrideLocalBtn) {
                 overrideLocalBtn.addEventListener('click', async () => {
-                    // 显示确认框
                     const confirmResult = confirm('警告：覆盖本地操作会将本地文件完全替换为仓库中的版本，所有本地修改将会丢失。\n\n此操作不可逆，请确保您已备份重要数据。\n\n是否继续执行覆盖操作？');
-                    
-                    // 如果用户取消，直接返回
-                    if (!confirmResult) {
-                        return;
-                    }
-                    
-                    // 添加loading状态和禁用按钮
+                    if (!confirmResult) return;
+
                     const originalText = overrideLocalBtn.textContent;
                     overrideLocalBtn.textContent = '覆盖中...';
                     overrideLocalBtn.disabled = true;
                     overrideLocalBtn.style.opacity = '0.7';
-                    
-                    // 获取笔记目录
-                    const notesDir = configManager.elements.workspaceDir.value.trim();
-                    
-                    if (!notesDir) {
-                        showMessage('请先填写笔记目录');
-                        // 恢复按钮状态
-                        overrideLocalBtn.textContent = originalText;
-                        overrideLocalBtn.disabled = false;
-                        overrideLocalBtn.style.opacity = '1';
-                        return;
-                    }
-                    
+
                     try {
-                        // 分割多个目录（用英文逗号分隔）
-                        const dirs = notesDir.split(',').map(dir => dir.trim()).filter(dir => dir !== '');
-                        
-                        // 从输入框获取仓库地址
-                        const repositoryUrl = (dialog.element.querySelector('#repositoryUrl') as HTMLInputElement).value.trim();
-                        if (!repositoryUrl) {
-                            showMessage('请先填写 GitHub 仓库地址');
-                            return;
-                        }
-                        
-                        // 从仓库地址中提取 owner 和 repo
-                        const repoInfo = extractOwnerAndRepo(repositoryUrl);
-                        if (!repoInfo) {
-                            showMessage('GitHub 仓库地址格式不正确');
-                            return;
-                        }
-                        
-                        // 从输入框获取分支名称
-                        const branch = (dialog.element.querySelector('#branch') as HTMLInputElement).value.trim() || 'main';
-                        
-                        // 从输入框获取认证 token
-                        const authToken = (dialog.element.querySelector('#authToken') as HTMLInputElement).value.trim();
-                        if (!authToken) {
-                            showMessage('请先填写 Personal Access Token');
-                            return;
-                        }
-                        
-                        // 获取文件的 MIME 类型
-                        function getMimeType(filePath: string) {
-                            const extension = filePath.split('.').pop()?.toLowerCase();
-                            const mimeTypes: { [key: string]: string } = {
-                                // 文本文件
-                                txt: 'text/plain',
-                                md: 'text/markdown',
-                                json: 'application/json',
-                                yaml: 'text/yaml',
-                                yml: 'text/yaml',
-                                js: 'application/javascript',
-                                ts: 'application/typescript',
-                                css: 'text/css',
-                                html: 'text/html',
-                                
-                                // 图片文件
-                                png: 'image/png',
-                                jpg: 'image/jpeg',
-                                jpeg: 'image/jpeg',
-                                gif: 'image/gif',
-                                webp: 'image/webp',
-                                svg: 'image/svg+xml',
-                                
-                                // 其他常见文件
-                                pdf: 'application/pdf',
-                                zip: 'application/zip',
-                                rar: 'application/x-rar-compressed',
-                                '7z': 'application/x-7z-compressed'
-                            };
-                            return mimeTypes[extension] || 'application/octet-stream';
-                        }
-                        
-                        // 下载远程文件（支持文本和二进制）
-                        async function downloadRemoteFileWrapper(filePath: string, fileSha: string): Promise<string | Uint8Array | null> {
-                            // 复用已导入的 downloadRemoteFile 获取原始字节
-                            const bytes = await downloadRemoteFile(repoInfo.owner, repoInfo.repo, branch, filePath, authToken);
-                            if (bytes === null) return null;
-                            
-                            // 对于文本文件，解码为字符串；对于二进制文件，直接返回原始字节
-                            const mimeType = getMimeType(filePath);
-                            if (mimeType.startsWith('text/') || mimeType === 'application/json' || mimeType === 'text/yaml') {
-                                return new TextDecoder('utf-8').decode(bytes);
-                            } else {
-                                return bytes;
-                            }
-                        }
-                        
-                        // 写入文件到本地
-                        async function writeLocalFile(filePath: string, content: string | Uint8Array) {
-                            try {
-                                // 构建本地文件路径
-                                const localFilePath = `/data/${filePath}`;
-                                
-                                // 确保目录存在
-                                const dirPath = localFilePath.substring(0, localFilePath.lastIndexOf('/'));
-                                
-                                // 检查目录是否存在
-                                try {
-                                    await readDir(dirPath);
-                                } catch (error) {
-                                    // 目录不存在，需要创建
-
-                                    // 创建目录结构
-                                    await createDirectory(dirPath);
-                                }
-                                
-                                // 根据内容类型创建适当的 Blob 对象
-                                const mimeType = getMimeType(filePath);
-                                let blob: Blob;
-                                if (typeof content === 'string') {
-                                    blob = new Blob([content], { type: mimeType });
-                                } else {
-                                    blob = new Blob([content], { type: mimeType });
-                                }
-                                
-                                // 使用putFile函数写入文件
-                                await putFile(localFilePath, false, blob);
-                                
-                                return true;
-                            } catch (error) {
-                                console.error(`写入文件 ${filePath} 失败:`, error);
-                                return false;
-                            }
-                        }
-                        
-                        // 使用导入的 collectRemoteFiles 获取远程文件列表
-                        const { remoteFiles, remoteFileShas } = await collectRemoteFiles(repoInfo.owner, repoInfo.repo, branch, authToken);
-                        
-                        // 下载并覆盖本地文件
-                        let downloadedCount = 0;
-                        let failedCount = 0;
-                        
-                        for (const filePath of remoteFiles) {
-                            // 下载远程文件（返回解码后的文本，二进制文件返回 Uint8Array）
-                            const content = await downloadRemoteFileWrapper(filePath, remoteFileShas.get(filePath));
-                            if (!content) {
-                                console.error(`下载文件 ${filePath} 失败`);
-                                failedCount++;
-                                continue;
-                            }
-                            
-                            // 写入本地文件
-                            const writeResult = await writeLocalFile(filePath, content);
-                            if (writeResult) {
-                                downloadedCount++;
-                            } else {
-                                console.error(`写入文件 ${filePath} 失败`);
-                                failedCount++;
-                            }
-                        }
-                        
-
-                        showMessage(`文件覆盖完成：成功 ${downloadedCount} 个，失败 ${failedCount} 个`);
-                        
-                        // 检查是否需要自动关闭页面
+                        await performOverride(dialog);
                         if (configManager.elements.autoCloseDialog.checked) {
                             dialog.destroy();
                         }
@@ -407,10 +249,34 @@ export class GitConfigDialog {
                         console.error('覆盖本地失败:', error);
                         showMessage('覆盖本地失败');
                     } finally {
-                        // 恢复按钮状态
                         overrideLocalBtn.textContent = originalText;
                         overrideLocalBtn.disabled = false;
                         overrideLocalBtn.style.opacity = '1';
+                    }
+                });
+            }
+            
+            // 拉取更新按钮点击事件
+            const pullUpdateBtn = dialog.element.querySelector('#pullUpdateBtn') as HTMLButtonElement;
+            if (pullUpdateBtn) {
+                pullUpdateBtn.addEventListener('click', async () => {
+                    const originalText = pullUpdateBtn.textContent;
+                    pullUpdateBtn.textContent = '拉取中...';
+                    pullUpdateBtn.disabled = true;
+                    pullUpdateBtn.style.opacity = '0.7';
+
+                    try {
+                        await performPullUpdate(dialog);
+                        if (configManager.elements.autoCloseDialog.checked) {
+                            dialog.destroy();
+                        }
+                    } catch (error) {
+                        console.error('拉取更新失败:', error);
+                        showMessage('拉取更新失败');
+                    } finally {
+                        pullUpdateBtn.textContent = originalText;
+                        pullUpdateBtn.disabled = false;
+                        pullUpdateBtn.style.opacity = '1';
                     }
                 });
             }
@@ -424,18 +290,21 @@ export class GitConfigDialog {
             const autoSyncSection = dialog.element.querySelector('#autoSyncSection') as HTMLElement;
             const manualSyncBtn = dialog.element.querySelector('#manualSyncBtn') as HTMLElement;
             const overrideLocalBtn = dialog.element.querySelector('#overrideLocalBtn') as HTMLElement;
+            const pullUpdateBtn = dialog.element.querySelector('#pullUpdateBtn') as HTMLElement;
             const syncIntervalInput = configManager.elements.syncInterval;
             
             if (syncMode === 'auto') {
-                // 显示自动同步设置，隐藏手动同步和覆盖本地按钮
+                // 显示自动同步设置，隐藏手动操作的按钮
                 autoSyncSection.style.display = 'block';
                 manualSyncBtn.style.display = 'none';
                 overrideLocalBtn.style.display = 'none';
+                pullUpdateBtn.style.display = 'none';
             } else if (syncMode === 'manual') {
-                // 隐藏自动同步设置，显示手动同步和覆盖本地按钮
+                // 隐藏自动同步设置，显示手动操作的按钮
                 autoSyncSection.style.display = 'none';
                 manualSyncBtn.style.display = 'inline-block';
                 overrideLocalBtn.style.display = 'inline-block';
+                pullUpdateBtn.style.display = 'inline-block';
                 // 清空自动同步间隔输入框
                 if (syncIntervalInput) {
                     syncIntervalInput.value = '';
