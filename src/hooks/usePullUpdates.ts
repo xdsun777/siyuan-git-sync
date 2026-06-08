@@ -1,7 +1,7 @@
 import { Dialog, showMessage } from "siyuan";
 import { readDir, getFileBlob, writeFileWithDirs } from "@/utils/siyuan";
 import { extractOwnerAndRepo, fetchRemoteTree, downloadBlobBySha, computeGitBlobSHA } from "@/utils/github";
-import { DialogElement } from "@/types";
+import { RepoInfo, DialogElement } from "@/types";
 import PromiseLimitPool from "@/libs/promise-pool";
 
 /** 并发数 */
@@ -14,33 +14,30 @@ export interface PullFileItem {
     type: 'new' | 'modified';
 }
 
+/** 拉取配置（独立于 DOM） */
+export interface PullConfigInput {
+    repoInfo: RepoInfo;
+    branch: string;
+    authToken: string;
+    dirs: string[];
+    /** 安静模式，只显示冲突弹窗，不弹进度/结果消息 */
+    silent?: boolean;
+}
+
 /**
- * 执行拉取远程更新操作
+ * 从配置对象执行拉取更新（不依赖 DOM）
  * 对比远端与本地，差异文件通过冲突弹窗让用户逐文件选择
  */
-export async function performPullUpdate(dialog: DialogElement): Promise<boolean> {
-    // ──── 读取表单配置 ────
-    const notesDir = (dialog.element.querySelector('#workspaceDir') as HTMLInputElement).value.trim();
-    if (!notesDir) { showMessage('请先填写笔记目录'); return false; }
-
-    const repositoryUrl = (dialog.element.querySelector('#repositoryUrl') as HTMLInputElement).value.trim();
-    if (!repositoryUrl) { showMessage('请先填写 GitHub 仓库地址'); return false; }
-
-    const repoInfo = extractOwnerAndRepo(repositoryUrl);
-    if (!repoInfo) { showMessage('GitHub 仓库地址格式不正确'); return false; }
-
-    const branch = (dialog.element.querySelector('#branch') as HTMLInputElement).value.trim() || 'main';
-    const authToken = (dialog.element.querySelector('#authToken') as HTMLInputElement).value.trim();
-    if (!authToken) { showMessage('请先填写 Personal Access Token'); return false; }
-
-    const dirs = notesDir.split(',').map(d => d.trim()).filter(d => d !== '');
+export async function performPullUpdateFromConfig(config: PullConfigInput): Promise<boolean> {
+    const { repoInfo, branch, authToken, dirs, silent } = config;
+    const msg = (text: string) => { if (!silent) showMessage(text); };
 
     try {
         // ──── 阶段 1: 获取远端文件树 ────
-        showMessage('获取远端文件列表...');
+        msg('获取远端文件列表...');
         const remoteTree = await fetchRemoteTree(repoInfo.owner, repoInfo.repo, branch, authToken);
         if (!remoteTree) {
-            showMessage('获取远端文件列表失败，请检查网络和配置');
+            msg('获取远端文件列表失败，请检查网络和配置');
             return false;
         }
 
@@ -63,9 +60,7 @@ export async function performPullUpdate(dialog: DialogElement): Promise<boolean>
                         });
                     }
                 }
-            } catch {
-                // 目录可能不存在，静默跳过
-            }
+            } catch { /* 目录可能不存在 */ }
         }
 
         for (const dir of allDirs) {
@@ -75,10 +70,8 @@ export async function performPullUpdate(dialog: DialogElement): Promise<boolean>
         }
 
         // ──── 阶段 3: 并行计算本地 SHA，对比差异 ────
-        showMessage(`对比 ${localFiles.length} 个本地文件...`);
+        msg(`对比 ${localFiles.length} 个本地文件...`);
         const pullFiles: PullFileItem[] = [];
-
-        // 先标记远端文件（所有远端路径在用户目录范围内）
         const remoteInScope = new Set<string>();
         for (const [remotePath] of remoteTree.files) {
             for (const dir of allDirs) {
@@ -89,7 +82,6 @@ export async function performPullUpdate(dialog: DialogElement): Promise<boolean>
             }
         }
 
-        // 并行计算本地 SHA
         const localShaMap = new Map<string, string>();
         const pool = new PromiseLimitPool<{ path: string; sha: string } | null>(CONCURRENCY);
         for (const file of localFiles) {
@@ -101,9 +93,7 @@ export async function performPullUpdate(dialog: DialogElement): Promise<boolean>
                     const content = new Uint8Array(arrayBuffer);
                     const sha = await computeGitBlobSHA(content);
                     return { path: file.relativePath, sha };
-                } catch {
-                    return null;
-                }
+                } catch { return null; }
             });
         }
         const shaResults = await pool.awaitAll();
@@ -111,7 +101,6 @@ export async function performPullUpdate(dialog: DialogElement): Promise<boolean>
             if (r) localShaMap.set(r.path, r.sha);
         }
 
-        // 对比：远端有，本地无 → new；双方都有但 SHA 不同 → modified
         for (const remotePath of remoteInScope) {
             const remoteSha = remoteTree.files.get(remotePath)!;
             const localSha = localShaMap.get(remotePath);
@@ -120,78 +109,83 @@ export async function performPullUpdate(dialog: DialogElement): Promise<boolean>
             } else if (localSha !== remoteSha) {
                 pullFiles.push({ path: remotePath, sha: remoteSha, type: 'modified' });
             }
-            // SHA 相同 → 跳过
         }
 
         if (pullFiles.length === 0) {
-            showMessage('本地已是最新，无需更新');
+            msg('本地已是最新，无需更新');
             return true;
         }
 
         // ──── 阶段 4: 冲突选择弹窗 ────
         const selectedPaths = await showConflictDialog(pullFiles);
-        if (selectedPaths === null) {
-            // 用户取消
-            return true;
-        }
-        if (selectedPaths.length === 0) {
-            showMessage('未选择任何文件，已取消');
+        if (selectedPaths === null || selectedPaths.length === 0) {
+            msg(selectedPaths === null ? '已取消' : '未选择任何文件');
             return true;
         }
 
-        // 过滤出用户选中的文件
         const selectedSet = new Set(selectedPaths);
         const selectedFiles = pullFiles.filter(f => selectedSet.has(f.path));
 
         // ──── 阶段 5: 并行下载 ────
-        showMessage(`下载 ${selectedFiles.length} 个文件...`);
+        msg(`下载 ${selectedFiles.length} 个文件...`);
         const downloadPool = new PromiseLimitPool<{ path: string; content: Uint8Array } | null>(CONCURRENCY);
         for (const file of selectedFiles) {
             downloadPool.add(async () => {
                 const content = await downloadBlobBySha(repoInfo.owner, repoInfo.repo, file.sha, authToken);
-                if (!content) {
-                    console.error(`下载失败: ${file.path}`);
-                    return null;
-                }
+                if (!content) { console.error(`下载失败: ${file.path}`); return null; }
                 return { path: file.path, content };
             });
         }
         const downloadResults = await downloadPool.awaitAll();
-        const downloadedFiles = downloadResults.filter(
-            (f): f is { path: string; content: Uint8Array } => f !== null
-        );
+        const downloadedFiles = downloadResults.filter((f): f is { path: string; content: Uint8Array } => f !== null);
         const downloadFailed = selectedFiles.length - downloadedFiles.length;
 
         if (downloadedFiles.length === 0) {
-            showMessage('所有文件下载失败，请检查网络');
+            msg('所有文件下载失败，请检查网络');
             return false;
         }
 
         // ──── 阶段 6: 并行写入本地 ────
-        showMessage('写入本地文件...');
-        let writeSuccess = 0;
-        let writeFailed = 0;
+        msg('写入本地文件...');
+        let writeSuccess = 0, writeFailed = 0;
         const writePool = new PromiseLimitPool<boolean>(CONCURRENCY);
         for (const file of downloadedFiles) {
-            writePool.add(async () => {
-                return await writeFileWithDirs(file.path, file.content);
-            });
+            writePool.add(async () => await writeFileWithDirs(file.path, file.content));
         }
         const writeResults = await writePool.awaitAll();
-        for (const ok of writeResults) {
-            if (ok) writeSuccess++;
-            else writeFailed++;
-        }
+        for (const ok of writeResults) { if (ok) writeSuccess++; else writeFailed++; }
 
         const totalFailed = downloadFailed + writeFailed;
-        showMessage(`拉取完成：成功 ${writeSuccess} 个${totalFailed > 0 ? `，失败 ${totalFailed} 个` : ''}`);
+        msg(`拉取完成：成功 ${writeSuccess} 个${totalFailed > 0 ? `，失败 ${totalFailed} 个` : ''}`);
         return true;
 
     } catch (error) {
         console.error('拉取更新异常:', error);
-        showMessage('拉取更新失败');
+        msg('拉取更新失败');
         return false;
     }
+}
+
+/**
+ * 从对话框 DOM 读取配置后执行拉取更新
+ */
+export async function performPullUpdate(dialog: DialogElement): Promise<boolean> {
+    const notesDir = (dialog.element.querySelector('#workspaceDir') as HTMLInputElement).value.trim();
+    if (!notesDir) { showMessage('请先填写笔记目录'); return false; }
+
+    const repositoryUrl = (dialog.element.querySelector('#repositoryUrl') as HTMLInputElement).value.trim();
+    if (!repositoryUrl) { showMessage('请先填写 GitHub 仓库地址'); return false; }
+
+    const repoInfo = extractOwnerAndRepo(repositoryUrl);
+    if (!repoInfo) { showMessage('GitHub 仓库地址格式不正确'); return false; }
+
+    const branch = (dialog.element.querySelector('#branch') as HTMLInputElement).value.trim() || 'main';
+    const authToken = (dialog.element.querySelector('#authToken') as HTMLInputElement).value.trim();
+    if (!authToken) { showMessage('请先填写 Personal Access Token'); return false; }
+
+    const dirs = notesDir.split(',').map(d => d.trim()).filter(d => d !== '');
+
+    return performPullUpdateFromConfig({ repoInfo, branch, authToken, dirs });
 }
 
 /**
@@ -302,5 +296,5 @@ function escapeHtml(str: string): string {
  * 拉取更新功能钩子
  */
 export function usePullUpdates() {
-    return { performPullUpdate };
+    return { performPullUpdate, performPullUpdateFromConfig };
 }

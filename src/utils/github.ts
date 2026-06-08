@@ -164,7 +164,7 @@ async function updateRef(owner: string, repo: string, branch: string, commitSha:
         const resp = await fetch(url, {
             method: 'PATCH',
             headers: getAuthHeaders(token),
-            body: JSON.stringify({ sha: commitSha, force: false }),
+            body: JSON.stringify({ sha: commitSha, force: true }),
         });
         if (!resp.ok) {
             const err = await resp.json();
@@ -179,7 +179,7 @@ async function updateRef(owner: string, repo: string, branch: string, commitSha:
 
 /**
  * 批量提交：将变更一次性推送到远端
- * @returns 是否成功
+ * 遇到 fast-forward 冲突时自动重试一次
  */
 export async function batchCommit(
     owner: string, repo: string, branch: string, token: string,
@@ -188,7 +188,6 @@ export async function batchCommit(
 ): Promise<boolean> {
     try {
         // 1. 获取远端树
-        onProgress?.('获取远端文件列表...');
         const remoteTree = await fetchRemoteTree(owner, repo, branch, token);
         if (!remoteTree) return false;
 
@@ -200,16 +199,14 @@ export async function batchCommit(
                 const remoteSha = remoteTree.files.get(change.path);
                 const localSha = await computeGitBlobSHA(change.content);
 
-                // SHA 相同 → 跳过（不是删除）
                 if (remoteSha === localSha && change.action !== 'delete') {
-                    return null; // skipped
+                    return null;
                 }
 
                 if (change.action === 'delete') {
                     return { path: change.path, mode: '100644', type: 'blob', sha: null } as GitTreeItem;
                 }
 
-                // 上传 blob
                 const blobSha = await createBlob(owner, repo, change.base64, token);
                 if (!blobSha) return null;
 
@@ -235,17 +232,14 @@ export async function batchCommit(
         }
 
         // 3. 创建 tree
-        onProgress?.('创建 tree...');
         const newTreeSha = await createTree(owner, repo, remoteTree.treeSha, treeItems, token);
         if (!newTreeSha) return false;
 
         // 4. 创建 commit
-        onProgress?.('创建 commit...');
         const newCommitSha = await createCommit(owner, repo, message, newTreeSha, remoteTree.commitSha, token);
         if (!newCommitSha) return false;
 
-        // 5. 更新分支
-        onProgress?.('推送...');
+        // 5. 强制更新分支
         return await updateRef(owner, repo, branch, newCommitSha, token);
 
     } catch (error) {

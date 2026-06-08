@@ -70,6 +70,8 @@ export interface GitConfig {
     workspaceDir: string;
     syncMode: string;
     syncInterval: number;
+    /** 推送弹窗频率: off(无) | medium(中) | high(密) */
+    pushFrequency?: string;
 }
 
 // 完整配置

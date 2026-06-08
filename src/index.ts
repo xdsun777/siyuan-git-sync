@@ -8,6 +8,7 @@ import "./index.scss";
 import { SettingUtils } from "./libs/setting-utils";
 import { GitConfigDialog } from "@/components/GitConfigDialog";
 import { performSyncFromConfig } from "@/hooks/useGitSync";
+import { performPullUpdateFromConfig } from "@/hooks/usePullUpdates";
 import { extractOwnerAndRepo } from "@/utils/github";
 
 const STORAGE_NAME = "menu-config";
@@ -16,6 +17,11 @@ export default class GitSyncPlugin extends Plugin {
 
     private isMobile: boolean;
     private settingUtils: SettingUtils;
+    /** Ctrl+S 防抖定时器 */
+    private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    /** 是否正在推送中 */
+    private pushing = false;
+    private onSaveBound = this.onSave.bind(this);
 
     async onload() {
         this.data[STORAGE_NAME] = { readonlyText: "Readonly" };
@@ -65,78 +71,126 @@ export default class GitSyncPlugin extends Plugin {
 
         this.settingUtils.load();
 
-        // 如果已保存自动同步配置，启动定时器
-        this.tryStartAutoSync();
+        // 监听 Ctrl+S，自动推送
+        document.addEventListener('keydown', this.onSaveBound);
+
+        // 如果已保存自动同步配置：先拉取远端，再启动推送定时器
+        this.tryAutoSync();
     }
 
     async onunload() {
         console.log(this.i18n.banPlugin);
-        this.stopAutoSync();
+        document.removeEventListener('keydown', this.onSaveBound);
+        if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
+        this.stopPushTimer();
     }
 
+    // ======================== 自动同步 ========================
+
     /**
-     * 尝试从已保存配置启动自动同步
+     * 自动同步入口：先拉取远端更新（冲突弹窗），再启动推送定时器
      */
-    tryStartAutoSync() {
+    async tryAutoSync() {
         const config = this.data.gitSyncConfig?.gitConf;
         if (!config || config.syncMode !== 'auto') return;
         if (!config.repositoryUrl || !config.authToken || !config.workspaceDir) return;
 
-        const interval = config.syncInterval;
-        if (!interval || interval <= 0) return;
+        const repoInfo = extractOwnerAndRepo(config.repositoryUrl);
+        if (!repoInfo) return;
 
-        this.startAutoSync(interval);
+        const dirs = config.workspaceDir
+            .replace(/^\/data\//, '')
+            .split(',')
+            .map(d => d.trim())
+            .filter(d => d !== '');
+
+        // 先拉取远端更新到本地
+        const frequency = config.pushFrequency || 'medium';
+        showMessage('正在检查远端更新...');
+        await performPullUpdateFromConfig({
+            repoInfo,
+            branch: config.branch,
+            authToken: config.authToken,
+            dirs,
+            silent: frequency !== 'high',  // 仅「密」显示进度
+        });
+
+        // 启动推送定时器
+        this.startPushTimer(frequency);
     }
 
     /**
-     * 启动自动同步定时器
-     * 每次触发时从已保存配置读取最新设置
+     * 启动推送定时器
+     * @param frequency 推送频率: high(60s/显示消息) | medium(5min/静默) | off(不推送)
      */
-    startAutoSync(intervalMinutes: number) {
-        this.stopAutoSync();
-
-        const ms = intervalMinutes * 60 * 1000;
-        window.autoSyncTimer = setInterval(async () => {
-            try {
-                const config = this.data.gitSyncConfig?.gitConf;
-                if (!config || config.syncMode !== 'auto') return;
-
-                const repoInfo = extractOwnerAndRepo(config.repositoryUrl);
-                if (!repoInfo) return;
-
-                const dirs = config.workspaceDir
-                    .replace(/^\/data\//, '')
-                    .split(',')
-                    .map(d => d.trim())
-                    .filter(d => d !== '');
-
-                showMessage("自动同步中");
-                const success = await performSyncFromConfig({
-                    repoInfo,
-                    branch: config.branch,
-                    authToken: config.authToken,
-                    commitTemplate: config.commitTemplate || "同步笔记更新：{{date}}",
-                    dirs,
-                });
-                if (success) showMessage('同步完成！');
-            } catch (error) {
-                console.error('自动同步失败:', error);
-            }
-        }, ms);
+    startPushTimer(_frequency: string) {
+        // 不再使用定时器，推送仅由 Ctrl+S 触发
     }
 
     /**
-     * 停止自动同步定时器
+     * Ctrl+S 事件处理 — 防抖合并，3 秒内的连续保存只触发一次推送
      */
-    stopAutoSync() {
+    private onSave(e: KeyboardEvent) {
+        if (!(e.ctrlKey || e.metaKey) || e.key !== 's') return;
+        const config = this.data.gitSyncConfig?.gitConf;
+        if (!config || config.syncMode !== 'auto') return;
+
+        // 重置防抖定时器
+        if (this.saveDebounceTimer) {
+            clearTimeout(this.saveDebounceTimer);
+        }
+        this.saveDebounceTimer = setTimeout(() => {
+            this.saveDebounceTimer = null;
+            if (this.pushing) return; // 已有推送在进行中，本次保存的变化会在下一次推送中包含
+            this.pushing = true;
+            const silent = (config.pushFrequency || 'medium') !== 'high';
+            this.doPush(silent).finally(() => { this.pushing = false; });
+        }, 3000);
+    }
+
+    /**
+     * 执行推送
+     */
+    private async doPush(silent: boolean) {
+        try {
+            const config = this.data.gitSyncConfig?.gitConf;
+            if (!config || config.syncMode !== 'auto') return;
+
+            const repoInfo = extractOwnerAndRepo(config.repositoryUrl);
+            if (!repoInfo) return;
+
+            const dirs = config.workspaceDir
+                .replace(/^\/data\//, '')
+                .split(',')
+                .map(d => d.trim())
+                .filter(d => d !== '');
+
+            await performSyncFromConfig({
+                repoInfo,
+                branch: config.branch,
+                authToken: config.authToken,
+                commitTemplate: config.commitTemplate || "同步笔记更新：{{date}}",
+                dirs,
+                silent,
+            });
+        } catch (error) {
+            console.error('推送失败:', error);
+        }
+    }
+
+    /**
+     * 停止推送定时器
+     */
+    stopPushTimer() {
         if (window.autoSyncTimer) {
             clearInterval(window.autoSyncTimer);
             window.autoSyncTimer = null;
         }
     }
 
+    // ======================== 生命周期 ========================
+
     async uninstall() {
-        // 删除插件保存的配置文件
         try {
             await this.removeData('gitSyncConfig');
         } catch (error) {
@@ -145,9 +199,6 @@ export default class GitSyncPlugin extends Plugin {
         }
     }
 
-    /**
-     * 重写 openSetting 方法，显示自定义的 Git 配置对话框
-     */
     openSetting() {
         GitConfigDialog.showGitConfigDialog(this);
     }

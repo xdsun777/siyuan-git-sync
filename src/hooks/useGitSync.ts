@@ -14,6 +14,10 @@ export interface SyncConfigInput {
     authToken: string;
     commitTemplate: string;
     dirs: string[];
+    /** 安静模式，不弹出消息 */
+    silent?: boolean;
+    /** 中断令牌，cancelled 变为 true 时停止推送 */
+    cancelToken?: { cancelled: boolean };
 }
 
 /**
@@ -21,18 +25,21 @@ export interface SyncConfigInput {
  * 供自动同步定时器和手动同步共用
  */
 export async function performSyncFromConfig(config: SyncConfigInput): Promise<boolean> {
-    const { repoInfo, branch, authToken, commitTemplate, dirs } = config;
+    const { repoInfo, branch, authToken, commitTemplate, dirs, silent, cancelToken } = config;
+    const msg = (text: string) => { if (!silent) showMessage(text); };
+    const cancelled = () => cancelToken?.cancelled ?? false;
 
     try {
         const commitMessage = commitTemplate.replace(/\{\{date\}\}/g, new Date().toLocaleString());
 
         // ──── 阶段 1: 获取远端全量文件 SHA（2 次 API）────
-        showMessage('获取远端文件列表...');
+        msg('获取远端文件列表...');
         const remoteTree = await fetchRemoteTree(repoInfo.owner, repoInfo.repo, branch, authToken);
         if (!remoteTree) {
-            showMessage('获取远端文件列表失败，请检查网络和配置');
+            msg('获取远端文件列表失败，请检查网络和配置');
             return false;
         }
+        if (cancelled()) { msg('推送已中断'); return false; }
 
         // ──── 阶段 2: 遍历本地目录，收集所有文件 ────
         const localFiles: Array<{ fullPath: string; relativePath: string }> = [];
@@ -65,12 +72,13 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
         }
 
         if (localFiles.length === 0) {
-            showMessage('本地没有文件可同步');
+            msg('本地没有文件可同步');
             return true;
         }
+        if (cancelled()) { msg('推送已中断'); return false; }
 
         // ──── 阶段 3: 并行计算 SHA，生成变更列表 ────
-        showMessage(`对比 ${localFiles.length} 个文件...`);
+        msg(`对比 ${localFiles.length} 个文件...`);
         const stats: SyncStats = { total: localFiles.length, uploaded: 0, deleted: 0, skipped: 0, failed: 0 };
 
         const pool = new PromiseLimitPool<FileChange | null>(CONCURRENCY);
@@ -129,15 +137,16 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
         stats.total = changes.length;
 
         if (changes.length === 0) {
-            showMessage(`同步完成：${stats.skipped} 个文件未变更，无需推送`);
+            msg(`同步完成：${stats.skipped} 个文件未变更，无需推送`);
             return true;
         }
+        if (cancelled()) { msg('推送已中断'); return false; }
 
         // ──── 阶段 4: 批量提交 ────
         const success = await batchCommit(
             repoInfo.owner, repoInfo.repo, branch, authToken,
             changes, commitMessage,
-            (msg) => showMessage(msg)
+            (text) => msg(text)
         );
 
         if (success) {
@@ -146,16 +155,16 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
             if (stats.deleted) parts.push(`删除 ${stats.deleted}`);
             if (stats.skipped) parts.push(`跳过 ${stats.skipped}`);
             if (stats.failed) parts.push(`失败 ${stats.failed}`);
-            showMessage(`同步完成！${parts.join('，')}`);
+            msg(`同步完成！${parts.join('，')}`);
             return true;
         } else {
-            showMessage('推送失败，请检查网络和配置');
+            msg('推送失败，请检查网络和配置');
             return false;
         }
 
     } catch (error) {
         console.error('同步异常:', error);
-        showMessage('同步失败');
+        msg('同步失败');
         return false;
     }
 }

@@ -56,9 +56,13 @@ export class GitConfigDialog {
                     </div>
                     
                     <div class="fn__flex-item" style="margin-bottom: 16px;" id="autoSyncSection">
-                        <label style="display: block; margin-bottom: 8px; font-weight: 500;">自动同步间隔（分钟）<span style="color: #ff4d4f;">*</span></label>
-                        <input type="number" id="syncInterval" class="b3-text-field" placeholder="0" style="width: 100%;" min="0" />
-                        <div style="margin-top: 4px; font-size: 12px; color: #666;">设置插件自动同步的间隔时间</div>
+                        <label style="display: block; margin-bottom: 8px; font-weight: 500;">推送弹窗频率 <span style="color: #ff4d4f;">*</span></label>
+                        <select id="pushFrequency" class="b3-text-field" style="width: 100%;">
+                            <option value="high">密 — 显示推送进度</option>
+                            <option value="medium">中 — 后台静默推送</option>
+                            <option value="off">无 — 不自动推送</option>
+                        </select>
+                        <div style="margin-top: 4px; font-size: 12px; color: #666;">Ctrl+S 保存后 3 秒自动推送到远端</div>
                     </div>
                     
                     <div class="fn__flex-item" style="margin-bottom: 16px;">
@@ -92,7 +96,7 @@ export class GitConfigDialog {
                 commitTemplate: dialog.element.querySelector('#commitTemplate') as HTMLInputElement,
                 workspaceDir: dialog.element.querySelector('#workspaceDir') as HTMLInputElement,
                 syncMode: dialog.element.querySelector('#syncMode') as HTMLSelectElement,
-                syncInterval: dialog.element.querySelector('#syncInterval') as HTMLInputElement,
+                pushFrequency: dialog.element.querySelector('#pushFrequency') as HTMLSelectElement,
                 autoCloseDialog: dialog.element.querySelector('#autoCloseDialog') as HTMLInputElement
             },
             
@@ -105,7 +109,7 @@ export class GitConfigDialog {
                     commitTemplate: this.elements.commitTemplate.value.trim(),
                     workspaceDir: this.elements.workspaceDir.value.trim(),
                     syncMode: this.elements.syncMode.value,
-                    syncInterval: parseInt(this.elements.syncInterval.value) || 0,
+                    pushFrequency: this.elements.pushFrequency.value || 'medium',
                     autoCloseDialog: this.elements.autoCloseDialog.checked
                 };
             },
@@ -138,8 +142,8 @@ export class GitConfigDialog {
                 if (config.syncMode) {
                     this.elements.syncMode.value = config.syncMode;
                 }
-                if (config.syncInterval) {
-                    this.elements.syncInterval.value = config.syncInterval.toString();
+                if (config.pushFrequency) {
+                    this.elements.pushFrequency.value = config.pushFrequency;
                 }
                 if (config.autoCloseDialog !== undefined) {
                     this.elements.autoCloseDialog.checked = config.autoCloseDialog;
@@ -291,7 +295,6 @@ export class GitConfigDialog {
             const manualSyncBtn = dialog.element.querySelector('#manualSyncBtn') as HTMLElement;
             const overrideLocalBtn = dialog.element.querySelector('#overrideLocalBtn') as HTMLElement;
             const pullUpdateBtn = dialog.element.querySelector('#pullUpdateBtn') as HTMLElement;
-            const syncIntervalInput = configManager.elements.syncInterval;
             
             if (syncMode === 'auto') {
                 // 显示自动同步设置，隐藏手动操作的按钮
@@ -305,10 +308,6 @@ export class GitConfigDialog {
                 manualSyncBtn.style.display = 'inline-block';
                 overrideLocalBtn.style.display = 'inline-block';
                 pullUpdateBtn.style.display = 'inline-block';
-                // 清空自动同步间隔输入框
-                if (syncIntervalInput) {
-                    syncIntervalInput.value = '';
-                }
             }
         }
         
@@ -319,7 +318,7 @@ export class GitConfigDialog {
                 saveButton.addEventListener('click', async () => {
                     // 获取当前配置
                     const currentConfig = configManager.getConfig();
-                    const { repositoryUrl, branch, authToken, commitTemplate, workspaceDir, syncMode, syncInterval } = currentConfig;
+                    const { repositoryUrl, branch, authToken, commitTemplate, workspaceDir, syncMode, pushFrequency } = currentConfig;
                     
                     // 检查必填字段
                     const missingFields = [];
@@ -328,14 +327,6 @@ export class GitConfigDialog {
                     if (!authToken) missingFields.push('Personal Access Token');
                     if (!commitTemplate) missingFields.push('默认 Commit 信息模板');
                     if (!workspaceDir) missingFields.push('工作空间目录');
-                    
-                    // 当选择自动同步模式时，验证同步间隔
-                    if (syncMode === 'auto') {
-                        if (isNaN(syncInterval) || syncInterval <= 0) {
-                            showMessage('自动同步模式下，同步间隔必须为大于0的整数，最小值为1');
-                            return;
-                        }
-                    }
                     
                     // 如果有必填字段未填写，显示提示信息
                     if (missingFields.length > 0) {
@@ -370,10 +361,10 @@ export class GitConfigDialog {
                     repositoryUrl: repositoryUrl,
                     branch: branch,
                     authToken: authToken,
-                    commitTemplate: templateWithPlaceholder, // 保存包含占位符的模板
+                    commitTemplate: templateWithPlaceholder,
                     workspaceDir: processedWorkspaceDir,
                     syncMode: syncMode,
-                    syncInterval: syncInterval,
+                    pushFrequency: pushFrequency || 'medium',
                     autoCloseDialog: currentConfig.autoCloseDialog
                 }
             };
@@ -391,20 +382,16 @@ export class GitConfigDialog {
                     // 显示保存成功提示
                     showMessage('配置保存成功！');
                     
-                    // 如果是自动同步模式，执行一次同步并设置定时器
+                    // 如果是自动同步模式，先推送一次再按频率启动定时器
                     if (syncMode === 'auto') {
-                        // 立即执行一次同步
-                        showMessage("自动同步中");
-                        const syncSuccess = await performSync(dialog);
-                        if (syncSuccess) {
-                            showMessage('同步完成！');
-                        }
+                        showMessage("同步中...");
+                        await performSync(dialog);
 
-                        // 委托 plugin 管理自动同步定时器
-                        (plugin as any).startAutoSync(syncInterval);
+                        if (pushFrequency !== 'off') {
+                            (plugin as any).startPushTimer(pushFrequency || 'medium');
+                        }
                     } else {
-                        // 手动同步模式，清除定时器
-                        (plugin as any).stopAutoSync();
+                        (plugin as any).stopPushTimer();
                     }
                     
                     // 关闭弹窗
