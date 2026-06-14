@@ -31,13 +31,14 @@ export interface PullConfigInput {
 export async function performPullUpdateFromConfig(config: PullConfigInput): Promise<boolean> {
     const { repoInfo, branch, authToken, dirs, silent } = config;
     const msg = (text: string) => { if (!silent) showMessage(text); };
+    const alert = (text: string) => showMessage(text);
 
     try {
         // ──── 阶段 1: 获取远端文件树 ────
         msg('获取远端文件列表...');
         const remoteTree = await fetchRemoteTree(repoInfo.owner, repoInfo.repo, branch, authToken);
         if (!remoteTree) {
-            msg('获取远端文件列表失败，请检查网络和配置');
+            alert('获取远端文件列表失败，请检查网络和配置');
             return false;
         }
 
@@ -141,7 +142,7 @@ export async function performPullUpdateFromConfig(config: PullConfigInput): Prom
         const downloadFailed = selectedFiles.length - downloadedFiles.length;
 
         if (downloadedFiles.length === 0) {
-            msg('所有文件下载失败，请检查网络');
+            alert('所有文件下载失败，请检查网络');
             return false;
         }
 
@@ -161,7 +162,7 @@ export async function performPullUpdateFromConfig(config: PullConfigInput): Prom
 
     } catch (error) {
         console.error('拉取更新异常:', error);
-        msg('拉取更新失败');
+        alert('拉取更新失败');
         return false;
     }
 }

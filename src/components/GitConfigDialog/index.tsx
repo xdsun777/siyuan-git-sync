@@ -210,11 +210,8 @@ export class GitConfigDialog {
                     }
                     
                     try {
-                        // 执行同步
-                        const syncSuccess = await performSync(dialog);
-                        if (syncSuccess) {
-                            showMessage('同步完成！');
-                        }
+                        // 执行同步（performSync 内部已显示结果详情）
+                        await performSync(dialog);
                         
                         // 检查是否需要自动关闭页面
                         if (configManager.elements.autoCloseDialog.checked) {

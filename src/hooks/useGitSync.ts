@@ -27,6 +27,8 @@ export interface SyncConfigInput {
 export async function performSyncFromConfig(config: SyncConfigInput): Promise<boolean> {
     const { repoInfo, branch, authToken, commitTemplate, dirs, silent, cancelToken } = config;
     const msg = (text: string) => { if (!silent) showMessage(text); };
+    /** 即使静默模式也显示——用于关键失败 */
+    const alert = (text: string) => showMessage(text);
     const cancelled = () => cancelToken?.cancelled ?? false;
 
     try {
@@ -36,7 +38,7 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
         msg('获取远端文件列表...');
         const remoteTree = await fetchRemoteTree(repoInfo.owner, repoInfo.repo, branch, authToken);
         if (!remoteTree) {
-            msg('获取远端文件列表失败，请检查网络和配置');
+            alert('获取远端文件列表失败，请检查网络和配置');
             return false;
         }
         if (cancelled()) { msg('推送已中断'); return false; }
@@ -158,13 +160,13 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
             msg(`同步完成！${parts.join('，')}`);
             return true;
         } else {
-            msg('推送失败，请检查网络和配置');
+            alert('推送失败，请检查网络和配置');
             return false;
         }
 
     } catch (error) {
         console.error('同步异常:', error);
-        msg('同步失败');
+        alert('同步失败');
         return false;
     }
 }
