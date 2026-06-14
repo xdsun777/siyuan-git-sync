@@ -1,6 +1,6 @@
 {
   "name": "siyuan-git-sync",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "type": "module",
   "description": "Sync your SiYuan notes with Git",
   "repository": "https://github.com/Ceysen/siyuan-git-sync",
