@@ -1,49 +1,45 @@
-/*
- * Copyright (c) 2024 by frostime. All Rights Reserved.
- * @Author       : frostime
- * @Date         : 2023-07-15 15:31:31
- * @FilePath     : /scripts/make_dev_link.js
- * @LastEditTime : 2024-09-06 18:13:53
- * @Description  : 
+/**
+ * 创建开发环境符号链接
+ * @Description  将 dev 目录链接到思源插件目录，方便开发调试
  */
-// make_dev_link.js
+
 import fs from 'fs';
 import { log, error, getSiYuanDir, chooseTarget, getThisPluginName, makeSymbolicLink } from './utils.js';
 
 let targetDir = '';
 
 /**
- * 1. Get the parent directory to install the plugin
+ * 1. 获取插件安装父目录
  */
-log('>>> Try to visit constant "targetDir" in make_dev_link.js...');
+log('>>> 尝试获取目标目录常量...');
 if (targetDir === '') {
-    log('>>> Constant "targetDir" is empty, try to get SiYuan directory automatically....');
+    log('>>> 目标目录为空，尝试自动获取思源工作空间...');
     let res = await getSiYuanDir();
 
     if (!res || res.length === 0) {
-        log('>>> Can not get SiYuan directory automatically, try to visit environment variable "SIYUAN_PLUGIN_DIR"....');
+        log('>>> 无法自动获取思源目录，尝试读取环境变量 SIYUAN_PLUGIN_DIR...');
         let env = process.env?.SIYUAN_PLUGIN_DIR;
         if (env) {
             targetDir = env;
-            log(`\tGot target directory from environment variable "SIYUAN_PLUGIN_DIR": ${targetDir}`);
+            log(`\t从环境变量获取到目标目录: ${targetDir}`);
         } else {
-            error('\tCan not get SiYuan directory from environment variable "SIYUAN_PLUGIN_DIR", failed!');
+            error('\t无法从环境变量获取思源目录，退出！');
             process.exit(1);
         }
     } else {
         targetDir = await chooseTarget(res);
     }
 
-    log(`>>> Successfully got target directory: ${targetDir}`);
+    log(`>>> 成功获取目标目录: ${targetDir}`);
 }
 if (!fs.existsSync(targetDir)) {
-    error(`Failed! Plugin directory not exists: "${targetDir}"`);
-    error('Please set the plugin directory in scripts/make_dev_link.js');
+    error(`失败！插件目录不存在: "${targetDir}"`);
+    error('请在 scripts/make_dev_link.js 中设置插件目录');
     process.exit(1);
 }
 
 /**
- * 2. The dev directory, which contains the compiled plugin code
+ * 2. 开发输出目录（编译产物）
  */
 const devDir = `${process.cwd()}/dev`;
 if (!fs.existsSync(devDir)) {
@@ -52,7 +48,7 @@ if (!fs.existsSync(devDir)) {
 
 
 /**
- * 3. The target directory to make symbolic link to dev directory
+ * 3. 计算目标符号链接路径
  */
 const name = getThisPluginName();
 if (name === null) {
@@ -61,6 +57,6 @@ if (name === null) {
 const targetPath = `${targetDir}/${name}`;
 
 /**
- * 4. Make symbolic link
+ * 4. 创建符号链接
  */
 makeSymbolicLink(devDir, targetPath);

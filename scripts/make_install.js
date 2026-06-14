@@ -1,41 +1,37 @@
-/*
- * Copyright (c) 2024 by frostime. All Rights Reserved.
- * @Author       : frostime
- * @Date         : 2024-03-28 20:03:59
- * @FilePath     : /scripts/make_install.js
- * @LastEditTime : 2024-09-06 18:08:19
- * @Description  : 
+/**
+ * 将编译产物安装到思源插件目录
+ * @Description  复制 dist 目录到思源插件目录
  */
-// make_install.js
+
 import fs from 'fs';
 import { log, error, getSiYuanDir, chooseTarget, copyDirectory, getThisPluginName } from './utils.js';
 
 let targetDir = '';
 
 /**
- * 1. Get the parent directory to install the plugin
+ * 1. 获取插件安装父目录
  */
-log('>>> Try to visit constant "targetDir" in make_install.js...');
+log('>>> 尝试获取目标目录常量...');
 if (targetDir === '') {
-    log('>>> Constant "targetDir" is empty, try to get SiYuan directory automatically....');
+    log('>>> 目标目录为空，尝试自动获取思源工作空间...');
     let res = await getSiYuanDir();
 
     if (res === null || res === undefined || res.length === 0) {
-        error('>>> Can not get SiYuan directory automatically');
+        error('>>> 无法自动获取思源目录');
         process.exit(1);
     } else {
         targetDir = await chooseTarget(res);
     }
-    log(`>>> Successfully got target directory: ${targetDir}`);
+    log(`>>> 成功获取目标目录: ${targetDir}`);
 }
 if (!fs.existsSync(targetDir)) {
-    error(`Failed! Plugin directory not exists: "${targetDir}"`);
-    error('Please set the plugin directory in scripts/make_install.js');
+    error(`失败！插件目录不存在: "${targetDir}"`);
+    error('请在 scripts/make_install.js 中设置插件目录');
     process.exit(1);
 }
 
 /**
- * 2. The dist directory, which contains the compiled plugin code
+ * 2. 构建输出目录 dist
  */
 const distDir = `${process.cwd()}/dist`;
 if (!fs.existsSync(distDir)) {
@@ -43,7 +39,7 @@ if (!fs.existsSync(distDir)) {
 }
 
 /**
- * 3. The target directory to install the plugin
+ * 3. 计算安装目标路径
  */
 const name = getThisPluginName();
 if (name === null) {
@@ -52,6 +48,6 @@ if (name === null) {
 const targetPath = `${targetDir}/${name}`;
 
 /**
- * 4. Copy the compiled plugin code to the target directory
+ * 4. 复制编译产物到插件目录
  */
 copyDirectory(distDir, targetPath);

@@ -1,27 +1,26 @@
-/*
- * Copyright (c) 2024 by frostime. All Rights Reserved.
- * @Author       : frostime
- * @Date         : 2024-09-06 17:42:57
- * @FilePath     : /scripts/utils.js
- * @LastEditTime : 2024-09-06 19:23:12
- * @Description  : 
+/**
+ * 公共工具函数
+ * @Description  日志输出、思源API交互、文件操作等工具函数
  */
-// common.js
+
 import fs from 'fs';
 import path from 'node:path';
 import http from 'node:http';
 import readline from 'node:readline';
 
-// Logging functions
+/** 日志输出（青色） */
 export const log = (info) => console.log(`\x1B[36m%s\x1B[0m`, info);
+/** 错误输出（红色） */
 export const error = (info) => console.log(`\x1B[31m%s\x1B[0m`, info);
 
-// HTTP POST headers
+/** HTTP POST 请求头 */
 export const POST_HEADER = {
     "Content-Type": "application/json",
 };
 
-// Fetch function compatible with older Node.js versions
+/**
+ * 兼容旧版 Node.js 的 fetch 实现
+ */
 export async function myfetch(url, options) {
     return new Promise((resolve, reject) => {
         let req = http.request(url, options, (res) => {
@@ -45,7 +44,7 @@ export async function myfetch(url, options) {
 }
 
 /**
- * Fetch SiYuan workspaces from port 6806
+ * 从思源端口 6806 获取所有工作空间列表
  * @returns {Promise<Object | null>}
  */
 export async function getSiYuanDir() {
@@ -59,25 +58,25 @@ export async function getSiYuanDir() {
         if (response.ok) {
             conf = await response.json();
         } else {
-            error(`\tHTTP-Error: ${response.status}`);
+            error(`\tHTTP 错误: ${response.status}`);
             return null;
         }
     } catch (e) {
-        error(`\tError: ${e}`);
-        error("\tPlease make sure SiYuan is running!!!");
+        error(`\t错误: ${e}`);
+        error("\t请确保思源笔记正在运行！");
         return null;
     }
-    return conf?.data; // 保持原始返回值
+    return conf?.data;
 }
 
 /**
- * Choose target workspace
+ * 交互式选择目标工作空间
  * @param {{path: string}[]} workspaces
- * @returns {string} The path of the selected workspace
+ * @returns {string} 选中的工作空间路径
  */
 export async function chooseTarget(workspaces) {
     let count = workspaces.length;
-    log(`>>> Got ${count} SiYuan ${count > 1 ? 'workspaces' : 'workspace'}`);
+    log(`>>> 找到 ${count} 个思源工作空间`);
     workspaces.forEach((workspace, i) => {
         log(`\t[${i}] ${workspace.path}`);
     });
@@ -90,7 +89,7 @@ export async function chooseTarget(workspaces) {
             output: process.stdout
         });
         let index = await new Promise((resolve) => {
-            rl.question(`\tPlease select a workspace[0-${count - 1}]: `, (answer) => {
+            rl.question(`\t请选择工作空间 [0-${count - 1}]: `, (answer) => {
                 resolve(answer);
             });
         });
@@ -100,7 +99,7 @@ export async function chooseTarget(workspaces) {
 }
 
 /**
- * Check if two paths are the same
+ * 比较两个路径是否相同
  * @param {string} path1
  * @param {string} path2
  * @returns {boolean}
@@ -117,11 +116,14 @@ export function cmpPath(path1, path2) {
     return path1 === path2;
 }
 
+/**
+ * 从 plugin.json 读取当前插件名称
+ */
 export function getThisPluginName() {
     if (!fs.existsSync('./plugin.json')) {
         process.chdir('../');
         if (!fs.existsSync('./plugin.json')) {
-            error('Failed! plugin.json not found');
+            error('失败！未找到 plugin.json');
             return null;
         }
     }
@@ -129,17 +131,20 @@ export function getThisPluginName() {
     const plugin = JSON.parse(fs.readFileSync('./plugin.json', 'utf8'));
     const name = plugin?.name;
     if (!name) {
-        error('Failed! Please set plugin name in plugin.json');
+        error('失败！请在 plugin.json 中设置插件名称');
         return null;
     }
 
     return name;
 }
 
+/**
+ * 递归复制目录
+ */
 export function copyDirectory(srcDir, dstDir) {
     if (!fs.existsSync(dstDir)) {
         fs.mkdirSync(dstDir);
-        log(`Created directory ${dstDir}`);
+        log(`已创建目录 ${dstDir}`);
     }
 
     fs.readdirSync(srcDir, { withFileTypes: true }).forEach((file) => {
@@ -150,33 +155,35 @@ export function copyDirectory(srcDir, dstDir) {
             copyDirectory(src, dst);
         } else {
             fs.copyFileSync(src, dst);
-            log(`Copied file: ${src} --> ${dst}`);
+            log(`已复制: ${src} --> ${dst}`);
         }
     });
-    log(`All files copied!`);
+    log(`全部文件复制完成！`);
 }
 
 
+/**
+ * 创建符号链接
+ * Go 1.23 不再支持 junction 类型，改用 dir 类型
+ * 详见: https://github.com/siyuan-note/siyuan/issues/12399
+ */
 export function makeSymbolicLink(srcPath, targetPath) {
     if (!fs.existsSync(targetPath)) {
-        // fs.symlinkSync(srcPath, targetPath, 'junction');
-        //Go 1.23 no longer supports junctions as symlinks
-        //Please refer to https://github.com/siyuan-note/siyuan/issues/12399
         fs.symlinkSync(srcPath, targetPath, 'dir');
-        log(`Done! Created symlink ${targetPath}`);
+        log(`完成！已创建符号链接 ${targetPath}`);
         return;
     }
 
-    //Check the existed target path
+    // 检查已存在的目标路径
     let isSymbol = fs.lstatSync(targetPath).isSymbolicLink();
     if (!isSymbol) {
-        error(`Failed! ${targetPath} already exists and is not a symbolic link`);
+        error(`失败！${targetPath} 已存在且不是符号链接`);
         return;
     }
     let existedPath = fs.readlinkSync(targetPath);
     if (cmpPath(existedPath, srcPath)) {
-        log(`Good! ${targetPath} is already linked to ${srcPath}`);
+        log(`良好！${targetPath} 已链接到 ${srcPath}`);
     } else {
-        error(`Error! Already exists symbolic link ${targetPath}\nBut it links to ${existedPath}`);
+        error(`错误！已存在符号链接 ${targetPath}\n但指向的是 ${existedPath}`);
     }
 }

@@ -1,9 +1,8 @@
-# Copyright (c) 2024 by frostime. All Rights Reserved.
+# 强制以管理员权限运行脚本
 # @Author       : frostime
 # @Date         : 2024-09-06 19:15:53
 # @FilePath     : /scripts/elevate.ps1
 # @LastEditTime : 2024-09-06 19:39:13
-# @Description  : Force to elevate the script to admin privilege.
 
 param (
     [string]$scriptPath
