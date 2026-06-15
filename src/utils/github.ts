@@ -127,18 +127,20 @@ class AuthError extends Error {
  */
 async function createBlob(owner: string, repo: string, content: string, token: string): Promise<string> {
     const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs`;
+    const body = JSON.stringify({ content, encoding: 'base64' });
+    console.log(`[DEBUG] createBlob: ${url}, contentLen=${content.length}, tokenPrefix=${token.substring(0, 10)}...`);
     const resp = await fetch(url, {
         method: 'POST',
         headers: getAuthHeaders(token),
-        body: JSON.stringify({ content, encoding: 'base64' }),
+        body,
     });
     if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ message: resp.statusText }));
-        const msg = err.message || resp.statusText;
+        const text = await resp.text();
+        console.error(`[DEBUG] createBlob failed: status=${resp.status}, body=${text.substring(0, 200)}`);
         if (resp.status === 401 || resp.status === 403) {
-            throw new AuthError(msg);
+            throw new AuthError(`HTTP ${resp.status}: ${text.substring(0, 100)}`);
         }
-        throw new Error(msg);
+        throw new Error(`HTTP ${resp.status}: ${text.substring(0, 100)}`);
     }
     const data = await resp.json();
     return data.sha;
