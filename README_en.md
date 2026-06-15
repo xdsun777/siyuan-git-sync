@@ -1,6 +1,6 @@
 # SiYuan Git Sync Plugin
 
-[中文](https://github.com/Ceysen/siyuan-git-sync/blob/main/README_zh_CN.md)
+[中文](https://github.com/xdsun777/siyuan-git-sync/blob/main/README_zh_CN.md)
 
 ## Project Introduction
 
@@ -39,7 +39,7 @@ The plugin uses GitHub's **Git Database API** for efficient batch operations:
 
 ### Manual Installation
 
-1. Download the latest `package.zip` from [GitHub Releases](https://github.com/Ceysen/siyuan-git-sync/releases)
+1. Download the latest `package.zip` from [GitHub Releases](https://github.com/xdsun777/siyuan-git-sync/releases)
 2. Extract to `{workspace}/data/plugins/`
 3. Restart SiYuan Notes
 4. Go to **Settings** → **Plugins** to enable
@@ -127,7 +127,7 @@ Click **Override Local** to pull all remote files and replace your local copies.
 ### Setup
 
 ```bash
-git clone https://github.com/Ceysen/siyuan-git-sync.git
+git clone https://github.com/xdsun777/siyuan-git-sync.git
 cd siyuan-git-sync
 pnpm install
 ```
@@ -168,12 +168,12 @@ Issues and PRs welcome. Before submitting:
 
 ## License
 
-[MIT License](https://github.com/Ceysen/siyuan-git-sync/blob/main/LICENSE)
+[MIT License](https://github.com/xdsun777/siyuan-git-sync/blob/main/LICENSE)
 
 ## Links
 
-- [GitHub Repository](https://github.com/Ceysen/siyuan-git-sync)
-- [Issue Tracker](https://github.com/Ceysen/siyuan-git-sync/issues)
+- [GitHub Repository](https://github.com/xdsun777/siyuan-git-sync)
+- [Issue Tracker](https://github.com/xdsun777/siyuan-git-sync/issues)
 
 ---
 

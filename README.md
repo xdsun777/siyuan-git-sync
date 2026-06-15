@@ -1,6 +1,6 @@
 # SiYuan Git Sync 插件
 
-[English](https://github.com/Ceysen/siyuan-git-sync/blob/main/README.md)
+[English](https://github.com/xdsun777/siyuan-git-sync/blob/main/README.md)
 
 ## 项目简介
 
@@ -39,7 +39,7 @@ SiYuan Git Sync 是一个专为[思源笔记](https://b3log.org/siyuan)设计的
 
 ### 手动安装
 
-1. 从 [GitHub Releases](https://github.com/Ceysen/siyuan-git-sync/releases) 下载最新 `package.zip`
+1. 从 [GitHub Releases](https://github.com/xdsun777/siyuan-git-sync/releases) 下载最新 `package.zip`
 2. 解压到 `{workspace}/data/plugins/`
 3. 重启思源笔记
 4. 进入「设置」→「插件」启用
@@ -127,7 +127,7 @@ SiYuan Git Sync 是一个专为[思源笔记](https://b3log.org/siyuan)设计的
 ### 本地开发
 
 ```bash
-git clone https://github.com/Ceysen/siyuan-git-sync.git
+git clone https://github.com/xdsun777/siyuan-git-sync.git
 cd siyuan-git-sync
 pnpm install
 ```
@@ -168,12 +168,12 @@ pnpm run build        # 输出到 dist/，同时生成 package.zip
 
 ## 许可证
 
-[MIT License](https://github.com/Ceysen/siyuan-git-sync/blob/main/LICENSE)
+[MIT License](https://github.com/xdsun777/siyuan-git-sync/blob/main/LICENSE)
 
 ## 联系方式
 
-- [GitHub 仓库](https://github.com/Ceysen/siyuan-git-sync)
-- [问题反馈](https://github.com/Ceysen/siyuan-git-sync/issues)
+- [GitHub 仓库](https://github.com/xdsun777/siyuan-git-sync)
+- [问题反馈](https://github.com/xdsun777/siyuan-git-sync/issues)
 
 ---
 

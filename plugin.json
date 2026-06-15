@@ -1,7 +1,7 @@
 {
   "name": "siyuan-git-sync",
-  "author": "ceysen",
-  "url": "https://github.com/Ceysen/siyuan-git-sync",
+  "author": "ceysen && xdsun777",
+  "url": "https://github.com/xdsun777/siyuan-git-sync",
   "version": "0.1.0",
   "minAppVersion": "2.10.14",
   "backends": [
@@ -11,12 +11,12 @@
     "all"
   ],
   "displayName": {
-    "default": "Siyuan Git Sync",
+    "default": "Git同步",
     "en_US": "Siyuan Git Sync",
     "zh_CN": "Git同步"
   },
   "description": {
-    "default": "Sync your SiYuan notes with Git",
+    "default": "将思源笔记与 Git 同步",
     "en_US": "Sync your SiYuan notes with Git",
     "zh_CN": "将思源笔记与 Git 同步"
   },
