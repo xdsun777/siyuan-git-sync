@@ -237,9 +237,10 @@ export async function batchCommit(
 
         for (const file of uploadFiles) {
             try {
+                const remoteSha = (file as any)._remoteSha ?? null;
                 const sha = await uploadFileContent(
                     owner, repo, branch, file.path, file.base64,
-                    (file as any)._remoteSha || null, message, token
+                    remoteSha, message, token
                 );
                 if (sha) uploaded++;
                 else failed++;
