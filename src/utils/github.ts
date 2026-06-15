@@ -6,7 +6,7 @@
 import {
     RepoInfo, RemoteFilesResult,
     GitHubFileResponse, GitHubCommitResponse, GitHubTreeResponse,
-    SyncStats, FileChange, RemoteTreeResult
+    FileChange, RemoteTreeResult
 } from "@/types";
 
 /* ========== 基础工具 ========== */
@@ -111,7 +111,7 @@ export async function fetchRemoteTree(owner: string, repo: string, branch: strin
     }
 }
 
-/* ========== Git Database API：批量提交 ========== */
+/* ========== Contents API：文件上传/删除 ========== */
 
 /** 认证错误，用于中断批量操作 */
 class AuthError extends Error {
@@ -122,105 +122,68 @@ class AuthError extends Error {
 }
 
 /**
- * 创建 Git blob 对象（上传文件内容）
- * 401/403 时抛出 AuthError 以中断整个批量提交
+ * 上传单个文件到远端（使用 Contents API）
+ * @returns fileSha 或 null
  */
-async function createBlob(owner: string, repo: string, content: string, token: string): Promise<string> {
-    const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs`;
-    const body = JSON.stringify({ content, encoding: 'base64' });
-    console.log(`[DEBUG] createBlob: ${url}, contentLen=${content.length}, tokenPrefix=${token.substring(0, 10)}...`);
+async function uploadFileContent(
+    owner: string, repo: string, branch: string,
+    filePath: string, content: string, sha: string | null,
+    message: string, token: string
+): Promise<string | null> {
+    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
+    const payload: Record<string, string> = {
+        message,
+        content,
+        branch,
+    };
+    if (sha) payload.sha = sha;
+
     const resp = await fetch(url, {
-        method: 'POST',
+        method: 'PUT',
         headers: getAuthHeaders(token),
-        body,
+        body: JSON.stringify(payload),
     });
-    if (!resp.ok) {
-        const text = await resp.text();
-        console.error(`[DEBUG] createBlob failed: status=${resp.status}, body=${text.substring(0, 200)}`);
-        if (resp.status === 401 || resp.status === 403) {
-            throw new AuthError(`HTTP ${resp.status}: ${text.substring(0, 100)}`);
-        }
-        throw new Error(`HTTP ${resp.status}: ${text.substring(0, 100)}`);
-    }
-    const data = await resp.json();
-    return data.sha;
-}
 
-/**
- * 创建 Git tree
- * @param treeItems 要新增/修改/删除的文件项
- *   - 新增/修改: { path, mode: '100644', type: 'blob', sha }
- *   - 删除:     { path, mode: '100644', type: 'blob', sha: null }
- */
-async function createTree(owner: string, repo: string, baseTreeSha: string, treeItems: GitTreeItem[], token: string): Promise<string | null> {
-    try {
-        const url = `https://api.github.com/repos/${owner}/${repo}/git/trees`;
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: getAuthHeaders(token),
-            body: JSON.stringify({ base_tree: baseTreeSha, tree: treeItems }),
-        });
-        if (!resp.ok) {
-            const err = await resp.json();
-            throw new Error(err.message || resp.statusText);
-        }
+    if (resp.ok) {
         const data = await resp.json();
-        return data.sha;
-    } catch (error) {
-        console.error('创建 tree 失败:', error);
-        return null;
+        return data.content?.sha || null;
     }
+
+    const text = await resp.text();
+    if (resp.status === 401 || resp.status === 403) {
+        throw new AuthError(`HTTP ${resp.status}: ${text.substring(0, 100)}`);
+    }
+    console.error(`上传文件 ${filePath} 失败:`, text.substring(0, 200));
+    return null;
 }
 
 /**
- * 创建 commit
+ * 删除远端文件（使用 Contents API）
  */
-async function createCommit(owner: string, repo: string, message: string, treeSha: string, parentSha: string, token: string): Promise<string | null> {
-    try {
-        const url = `https://api.github.com/repos/${owner}/${repo}/git/commits`;
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: getAuthHeaders(token),
-            body: JSON.stringify({ message, tree: treeSha, parents: [parentSha] }),
-        });
-        if (!resp.ok) {
-            const err = await resp.json();
-            throw new Error(err.message || resp.statusText);
-        }
-        const data = await resp.json();
-        return data.sha;
-    } catch (error) {
-        console.error('创建 commit 失败:', error);
-        return null;
+async function deleteFileContent(
+    owner: string, repo: string, branch: string,
+    filePath: string, sha: string, message: string, token: string
+): Promise<boolean> {
+    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`;
+    const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: getAuthHeaders(token),
+        body: JSON.stringify({ message, sha, branch }),
+    });
+
+    if (resp.ok) return true;
+
+    const text = await resp.text();
+    if (resp.status === 401 || resp.status === 403) {
+        throw new AuthError(`HTTP ${resp.status}: ${text.substring(0, 100)}`);
     }
+    console.error(`删除文件 ${filePath} 失败:`, text.substring(0, 200));
+    return false;
 }
 
 /**
- * 更新分支引用
- */
-async function updateRef(owner: string, repo: string, branch: string, commitSha: string, token: string): Promise<boolean> {
-    try {
-        const url = `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branch}`;
-        const resp = await fetch(url, {
-            method: 'PATCH',
-            headers: getAuthHeaders(token),
-            body: JSON.stringify({ sha: commitSha, force: true }),
-        });
-        if (!resp.ok) {
-            const err = await resp.json();
-            throw new Error(err.message || resp.statusText);
-        }
-        return true;
-    } catch (error) {
-        console.error('更新分支失败:', error);
-        return false;
-    }
-}
-
-/**
- * 批量提交：将变更一次性推送到远端
- * 遇到 fast-forward 冲突时自动重试一次
- * @returns { success: boolean, error?: string }
+ * 批量提交：逐个上传变更文件（Contents API）
+ * 跳过内容 SHA 与远端完全相同的文件
  */
 export async function batchCommit(
     owner: string, repo: string, branch: string, token: string,
@@ -228,67 +191,91 @@ export async function batchCommit(
     onProgress?: (msg: string) => void
 ): Promise<{ success: boolean; error?: string }> {
     try {
-        // 1. 获取远端树
+        // 1. 获取远端文件树（用于 SHA 对比和删除时获取 sha）
         const remoteTree = await fetchRemoteTree(owner, repo, branch, token);
         if (!remoteTree) return { success: false, error: '获取远端文件列表失败' };
 
-        // 2. 构建 tree items（并行上传 blob）
-        onProgress?.(`对比 ${changes.length} 个文件...`);
-        const treeItems: GitTreeItem[] = [];
-        try {
-            const blobResults = await Promise.all(
-                changes.map(async (change) => {
-                    const remoteSha = remoteTree.files.get(change.path);
-                    const localSha = await computeGitBlobSHA(change.content);
+        // 2. 过滤出真正需要操作的文件
+        const uploadFiles: FileChange[] = [];
+        const deleteFiles: FileChange[] = [];
+        let skipped = 0;
 
-                    if (remoteSha === localSha && change.action !== 'delete') {
-                        return null;
-                    }
-
-                    if (change.action === 'delete') {
-                        return { path: change.path, mode: '100644', type: 'blob', sha: null } as GitTreeItem;
-                    }
-
-                    const blobSha = await createBlob(owner, repo, change.base64, token);
-                    return {
-                        path: change.path,
-                        mode: change.mode || '100644',
-                        type: 'blob',
-                        sha: blobSha,
-                    } as GitTreeItem;
-                })
-            );
-
-            for (const item of blobResults) {
-                if (item) treeItems.push(item);
+        for (const change of changes) {
+            if (change.action === 'delete') {
+                const remoteSha = remoteTree.files.get(change.path);
+                if (remoteSha) {
+                    change.content = new Uint8Array(0); // 占位，实际用 remoteSha
+                    // 把 remoteSha 存到 base64 里传给 deleteFileContent
+                    (change as any)._remoteSha = remoteSha;
+                    deleteFiles.push(change);
+                }
+                continue;
             }
-        } catch (error) {
-            if (error instanceof AuthError) {
-                return { success: false, error: 'Token 无效或权限不足，请在 GitHub 重新生成 Personal Access Token（需勾选 Contents 读写权限）' };
+
+            const remoteSha = remoteTree.files.get(change.path);
+            const localSha = await computeGitBlobSHA(change.content);
+            if (remoteSha === localSha) {
+                skipped++;
+                continue;
             }
-            console.error('创建 blob 失败:', error);
-            return { success: false, error: '上传文件失败，请检查网络' };
+            (change as any)._remoteSha = remoteSha;
+            uploadFiles.push(change);
         }
 
-        const skipped = changes.length - treeItems.length;
-        onProgress?.(`变更: ${treeItems.length} 个文件${skipped > 0 ? `，跳过 ${skipped} 个未改动文件` : ''}`);
+        const totalOps = uploadFiles.length + deleteFiles.length;
+        onProgress?.(`变更: ${totalOps} 个文件${skipped > 0 ? `，跳过 ${skipped} 个未改动文件` : ''}`);
 
-        if (treeItems.length === 0) {
+        if (totalOps === 0) {
             onProgress?.('没有变更，无需提交');
             return { success: true };
         }
 
-        // 3. 创建 tree
-        const newTreeSha = await createTree(owner, repo, remoteTree.treeSha, treeItems, token);
-        if (!newTreeSha) return { success: false, error: '创建 tree 失败' };
+        // 3. 逐个上传文件（串行，避免冲突）
+        let uploaded = 0;
+        let deleted = 0;
+        let failed = 0;
 
-        // 4. 创建 commit
-        const newCommitSha = await createCommit(owner, repo, message, newTreeSha, remoteTree.commitSha, token);
-        if (!newCommitSha) return { success: false, error: '创建 commit 失败' };
+        for (const file of uploadFiles) {
+            try {
+                const sha = await uploadFileContent(
+                    owner, repo, branch, file.path, file.base64,
+                    (file as any)._remoteSha || null, message, token
+                );
+                if (sha) uploaded++;
+                else failed++;
+                onProgress?.(`上传: ${uploaded + deleted}/${totalOps} ${file.path}`);
+            } catch (error) {
+                if (error instanceof AuthError) {
+                    return { success: false, error: 'Token 无效或权限不足，请在 GitHub 重新生成 Personal Access Token（需勾选 Contents 读写权限）' };
+                }
+                failed++;
+            }
+        }
 
-        // 5. 强制更新分支
-        const ok = await updateRef(owner, repo, branch, newCommitSha, token);
-        return ok ? { success: true } : { success: false, error: '更新分支引用失败' };
+        for (const file of deleteFiles) {
+            try {
+                const sha = (file as any)._remoteSha;
+                if (!sha) continue;
+                const ok = await deleteFileContent(
+                    owner, repo, branch, file.path, sha, message, token
+                );
+                if (ok) deleted++;
+                else failed++;
+                onProgress?.(`删除: ${uploaded + deleted}/${totalOps} ${file.path}`);
+            } catch (error) {
+                if (error instanceof AuthError) {
+                    return { success: false, error: 'Token 无效或权限不足' };
+                }
+                failed++;
+            }
+        }
+
+        if (failed > 0) {
+            return { success: false, error: `上传 ${uploaded} 个，删除 ${deleted} 个，失败 ${failed} 个` };
+        }
+
+        onProgress?.(`完成：上传 ${uploaded} 个，删除 ${deleted} 个`);
+        return { success: true };
 
     } catch (error) {
         if (error instanceof AuthError) {
