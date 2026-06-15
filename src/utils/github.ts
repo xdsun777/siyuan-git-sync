@@ -83,27 +83,35 @@ export async function fetchRemoteTree(owner: string, repo: string, branch: strin
 
 /* ========== Git Database API：批量提交 ========== */
 
+/** 认证错误，用于中断批量操作 */
+class AuthError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'AuthError';
+    }
+}
+
 /**
  * 创建 Git blob 对象（上传文件内容）
+ * 401/403 时抛出 AuthError 以中断整个批量提交
  */
-async function createBlob(owner: string, repo: string, content: string, token: string): Promise<string | null> {
-    try {
-        const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs`;
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: getAuthHeaders(token),
-            body: JSON.stringify({ content, encoding: 'base64' }),
-        });
-        if (!resp.ok) {
-            const err = await resp.json();
-            throw new Error(err.message || resp.statusText);
+async function createBlob(owner: string, repo: string, content: string, token: string): Promise<string> {
+    const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs`;
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: getAuthHeaders(token),
+        body: JSON.stringify({ content, encoding: 'base64' }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ message: resp.statusText }));
+        const msg = err.message || resp.statusText;
+        if (resp.status === 401 || resp.status === 403) {
+            throw new AuthError(msg);
         }
-        const data = await resp.json();
-        return data.sha;
-    } catch (error) {
-        console.error('创建 blob 失败:', error);
-        return null;
+        throw new Error(msg);
     }
+    const data = await resp.json();
+    return data.sha;
 }
 
 /**
@@ -180,47 +188,54 @@ async function updateRef(owner: string, repo: string, branch: string, commitSha:
 /**
  * 批量提交：将变更一次性推送到远端
  * 遇到 fast-forward 冲突时自动重试一次
+ * @returns { success: boolean, error?: string }
  */
 export async function batchCommit(
     owner: string, repo: string, branch: string, token: string,
     changes: FileChange[], message: string,
     onProgress?: (msg: string) => void
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
     try {
         // 1. 获取远端树
         const remoteTree = await fetchRemoteTree(owner, repo, branch, token);
-        if (!remoteTree) return false;
+        if (!remoteTree) return { success: false, error: '获取远端文件列表失败' };
 
         // 2. 构建 tree items（并行上传 blob）
         onProgress?.(`对比 ${changes.length} 个文件...`);
         const treeItems: GitTreeItem[] = [];
-        const blobResults = await Promise.all(
-            changes.map(async (change) => {
-                const remoteSha = remoteTree.files.get(change.path);
-                const localSha = await computeGitBlobSHA(change.content);
+        try {
+            const blobResults = await Promise.all(
+                changes.map(async (change) => {
+                    const remoteSha = remoteTree.files.get(change.path);
+                    const localSha = await computeGitBlobSHA(change.content);
 
-                if (remoteSha === localSha && change.action !== 'delete') {
-                    return null;
-                }
+                    if (remoteSha === localSha && change.action !== 'delete') {
+                        return null;
+                    }
 
-                if (change.action === 'delete') {
-                    return { path: change.path, mode: '100644', type: 'blob', sha: null } as GitTreeItem;
-                }
+                    if (change.action === 'delete') {
+                        return { path: change.path, mode: '100644', type: 'blob', sha: null } as GitTreeItem;
+                    }
 
-                const blobSha = await createBlob(owner, repo, change.base64, token);
-                if (!blobSha) return null;
+                    const blobSha = await createBlob(owner, repo, change.base64, token);
+                    return {
+                        path: change.path,
+                        mode: change.mode || '100644',
+                        type: 'blob',
+                        sha: blobSha,
+                    } as GitTreeItem;
+                })
+            );
 
-                return {
-                    path: change.path,
-                    mode: change.mode || '100644',
-                    type: 'blob',
-                    sha: blobSha,
-                } as GitTreeItem;
-            })
-        );
-
-        for (const item of blobResults) {
-            if (item) treeItems.push(item);
+            for (const item of blobResults) {
+                if (item) treeItems.push(item);
+            }
+        } catch (error) {
+            if (error instanceof AuthError) {
+                return { success: false, error: 'Token 无效或权限不足，请在 GitHub 重新生成 Personal Access Token（需勾选 Contents 读写权限）' };
+            }
+            console.error('创建 blob 失败:', error);
+            return { success: false, error: '上传文件失败，请检查网络' };
         }
 
         const skipped = changes.length - treeItems.length;
@@ -228,23 +243,27 @@ export async function batchCommit(
 
         if (treeItems.length === 0) {
             onProgress?.('没有变更，无需提交');
-            return true;
+            return { success: true };
         }
 
         // 3. 创建 tree
         const newTreeSha = await createTree(owner, repo, remoteTree.treeSha, treeItems, token);
-        if (!newTreeSha) return false;
+        if (!newTreeSha) return { success: false, error: '创建 tree 失败' };
 
         // 4. 创建 commit
         const newCommitSha = await createCommit(owner, repo, message, newTreeSha, remoteTree.commitSha, token);
-        if (!newCommitSha) return false;
+        if (!newCommitSha) return { success: false, error: '创建 commit 失败' };
 
         // 5. 强制更新分支
-        return await updateRef(owner, repo, branch, newCommitSha, token);
+        const ok = await updateRef(owner, repo, branch, newCommitSha, token);
+        return ok ? { success: true } : { success: false, error: '更新分支引用失败' };
 
     } catch (error) {
+        if (error instanceof AuthError) {
+            return { success: false, error: 'Token 无效或权限不足' };
+        }
         console.error('批量提交失败:', error);
-        return false;
+        return { success: false, error: '批量提交失败' };
     }
 }
 

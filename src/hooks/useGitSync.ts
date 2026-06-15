@@ -145,13 +145,13 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
         if (cancelled()) { msg('推送已中断'); return false; }
 
         // ──── 阶段 4: 批量提交 ────
-        const success = await batchCommit(
+        const result = await batchCommit(
             repoInfo.owner, repoInfo.repo, branch, authToken,
             changes, commitMessage,
             (text) => msg(text)
         );
 
-        if (success) {
+        if (result.success) {
             const parts: string[] = [];
             if (stats.uploaded) parts.push(`上传 ${stats.uploaded}`);
             if (stats.deleted) parts.push(`删除 ${stats.deleted}`);
@@ -160,7 +160,7 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
             msg(`同步完成！${parts.join('，')}`);
             return true;
         } else {
-            alert('推送失败，请检查网络和配置');
+            alert(result.error || '推送失败');
             return false;
         }
 
