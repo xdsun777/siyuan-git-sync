@@ -35,7 +35,7 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
         const commitMessage = commitTemplate.replace(/\{\{date\}\}/g, new Date().toLocaleString());
 
         // ──── 阶段 0: 验证 Token ────
-        const validation = await validateToken(authToken);
+        const validation = await validateToken(repoInfo.owner, repoInfo.repo, authToken);
         if (!validation.valid) {
             alert(validation.error || 'Token 验证失败');
             return false;

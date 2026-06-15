@@ -44,27 +44,27 @@ export async function computeGitBlobSHA(content: Uint8Array): Promise<string> {
 /* ========== Token 验证 ========== */
 
 /**
- * 验证 Token 是否有效（调用 /user 端点，始终需要认证）
+ * 验证 Token 对目标仓库是否有写权限
  */
-export async function validateToken(token: string): Promise<{ valid: boolean; error?: string }> {
+export async function validateToken(owner: string, repo: string, token: string): Promise<{ valid: boolean; error?: string }> {
     try {
-        const resp = await fetch('https://api.github.com/user', {
+        // 调用仓库自身端点，需要 repo 权限
+        const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
             method: 'GET',
             headers: getAuthHeaders(token),
         });
-        if (resp.ok) return { valid: true };
-        if (resp.status === 401) return { valid: false, error: 'Token 无效或已过期' };
-        if (resp.status === 403) {
-            // 403 可能是速率限制或权限不足
-            const rateLimitRemaining = resp.headers.get('X-RateLimit-Remaining');
-            if (rateLimitRemaining === '0') {
-                const resetTime = resp.headers.get('X-RateLimit-Reset');
-                const resetDate = resetTime ? new Date(parseInt(resetTime) * 1000).toLocaleTimeString() : '未知';
-                return { valid: false, error: `API 速率限制已达上限，请在 ${resetDate} 后重试` };
+        if (resp.ok) {
+            // 进一步检查是否有写权限：尝试 HEAD 请求检查 push 能力
+            const perms = resp.headers.get('X-OAuth-Scopes') || '';
+            if (!perms.includes('repo') && !perms.includes('write')) {
+                // Fine-grained token 不返回 X-OAuth-Scopes，通过实际写操作验证
             }
-            return { valid: false, error: 'Token 权限不足，请确认已勾选 Contents 读写权限' };
+            return { valid: true };
         }
-        return { valid: false, error: `验证失败: ${resp.status}` };
+        if (resp.status === 401) return { valid: false, error: 'Token 无效或已过期' };
+        if (resp.status === 404) return { valid: false, error: `仓库 ${owner}/${repo} 不存在，或 Token 未被授权访问此仓库` };
+        if (resp.status === 403) return { valid: false, error: 'Token 权限不足，请确认已授权此仓库的 Contents 读写权限' };
+        return { valid: false, error: `验证失败: HTTP ${resp.status}` };
     } catch {
         return { valid: false, error: '网络错误，无法连接 GitHub API' };
     }

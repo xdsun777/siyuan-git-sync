@@ -30,7 +30,7 @@ export async function performOverride(dialog: DialogElement): Promise<boolean> {
 
     try {
         // ──── 阶段 0: 验证 Token ────
-        const validation = await validateToken(authToken);
+        const validation = await validateToken(repoInfo.owner, repoInfo.repo, authToken);
         if (!validation.valid) {
             showMessage(validation.error || 'Token 验证失败');
             return false;
