@@ -1,130 +1,130 @@
-# SiYuan Git Sync 插件
+# SiYuan Git Sync Plugin
 
-[English](https://github.com/xdsun777/siyuan-git-sync/blob/main/README.md)
+[中文](https://github.com/xdsun777/siyuan-git-sync/blob/main/README_zh_CN.md)
 
-## 项目简介
+## Project Introduction
 
-SiYuan Git Sync 是一个专为[思源笔记](https://b3log.org/siyuan)设计的同步插件，支持将笔记自动或手动同步到 GitHub 仓库，实现版本控制和多设备同步。
+SiYuan Git Sync is a plugin designed for [SiYuan Notes](https://b3log.org/siyuan), enabling automatic or manual synchronization of note content to GitHub repositories for version control and multi-device sync.
 
-## 功能特性
+## Features
 
-- **GitHub 仓库同步**：将笔记推送到指定 GitHub 仓库
-- **智能差异对比**：本地计算 Git blob SHA，跳过未变更文件，大幅减少 API 请求
-- **批量提交**：所有变更打包为一次 Git commit（基于 Git Database API）
-- **自动/手动同步**：定时自动同步或手动触发
-- **多目录支持**：同时同步多个笔记目录
-- **覆盖本地**：用远程仓库版本覆盖本地文件
-- **自定义提交信息**：支持 `{{date}}` 占位符模板
-- **全平台国际化**：支持中英文，兼容 Windows / macOS / Linux
+- **GitHub Sync**: Push note files to a specified GitHub repository
+- **Smart Diff**: Computes local Git blob SHA to skip unchanged files, minimizing API calls
+- **Batch Commit**: All changes packed into a single Git commit via Git Database API
+- **Auto/Manual Sync**: Scheduled automatic sync or manual trigger
+- **Multi-directory**: Sync multiple notebook directories simultaneously
+- **Override Local**: Pull and replace local files with the remote repository version
+- **Custom Commit Messages**: Template-based messages with `{{date}}` placeholder
+- **i18n Support**: Full Chinese and English localization on all platforms (Windows / macOS / Linux)
 
-## 同步原理
+## Sync Mechanism
 
-插件使用 GitHub 的 **Git Database API** 实现高效批量操作：
+The plugin uses GitHub's **Git Database API** for efficient batch operations:
 
-1. **获取远端文件树** — 2 次 API 拿到所有远端文件及其 SHA 值
-2. **本地并行计算 SHA** — 使用 `PromiseLimitPool` 5 并发遍历本地文件，通过 Web Crypto API 计算 Git blob SHA-1
-3. **差异对比** — 本地 SHA 与远端 SHA 逐一比对，相同的跳过
-4. **批量提交** — 变更文件上传为 blob，创建 tree → commit → 更新 ref，一次推送
+1. **Fetch remote tree** — 2 API calls to get all remote file SHAs
+2. **Local SHA computation** — Parallel scanning with `PromiseLimitPool` (5 concurrent), computing Git blob SHA-1 via Web Crypto API
+3. **Diff & skip** — Compare local vs remote SHA; skip unchanged files
+4. **Batch commit** — Upload changed files as blobs, create a single tree → commit → update ref
 
-*100 个文件其中 10 个变更：约 205 次 API → 约 13 次 API（减少 93%）*
+*100 files with 10 changes: ~205 API calls → ~13 API calls (-93%)*
 
-## 安装方法
+## Installation
 
-### 从集市安装
+### From Marketplace
 
-1. 打开思源笔记
-2. 进入「集市」→「插件」
-3. 搜索「Git Sync」并点击「安装」
-4. 安装完成后点击「启用」
+1. Open SiYuan Notes
+2. Go to **Marketplace** → **Plugins**
+3. Search "Git Sync" and click **Install**
+4. Click **Enable** after installation
 
-### 手动安装
+### Manual Installation
 
-1. 从 [GitHub Releases](https://github.com/xdsun777/siyuan-git-sync/releases) 下载最新 `package.zip`
-2. 解压到 `{workspace}/data/plugins/`
-3. 重启思源笔记
-4. 进入「设置」→「插件」启用
+1. Download the latest `package.zip` from [GitHub Releases](https://github.com/xdsun777/siyuan-git-sync/releases)
+2. Extract to `{workspace}/data/plugins/`
+3. Restart SiYuan Notes
+4. Go to **Settings** → **Plugins** to enable
 
-## 使用指南
+## Usage
 
-### 配置同步
+### Configure
 
-点击顶部栏插件图标，填写：
+Click the plugin icon on the top bar, fill in:
 
-| 配置项 | 说明 | 示例 |
-|-------|------|------|
-| GitHub 仓库地址 | 仓库 HTTPS 地址 | `https://github.com/user/repo.git` |
-| 分支名称 | 目标分支 | `main` |
-| Personal Access Token | 具有 `repo` 权限的令牌 | `ghp_xxx` |
-| Commit 信息模板 | 支持 `{{date}}` 占位符 | `同步笔记更新：{{date}}` |
-| 笔记目录 | 逗号分隔（自动加 `/data/` 前缀） | `20240101-abc` 或 `dir1,dir2` |
-| 同步模式 | 自动或手动 | `manual` |
-| 自动同步间隔 | 分钟（仅自动模式） | `30` |
-| 自动关闭页面 | 操作完成后关闭对话框 | `false` |
+| Field | Description | Example |
+|-------|-------------|---------|
+| GitHub Repository URL | HTTPS URL of your repo | `https://github.com/user/repo.git` |
+| Branch | Target branch | `main` |
+| Personal Access Token | GitHub PAT with `repo` scope | `ghp_xxx` |
+| Commit Template | Supports `{{date}}` | `Sync: {{date}}` |
+| Notebook Directories | Comma-separated (auto-prefixed with `/data/`) | `20240101-abc` or `dir1,dir2` |
+| Sync Mode | Auto or Manual | `manual` |
+| Sync Interval | Minutes (auto mode only) | `30` |
+| Auto-close Dialog | Close after sync/override | `false` |
 
-点击「保存配置」。
+Click **Save Config**.
 
-### 手动同步
+### Manual Sync
 
-手动模式下，打开配置对话框点击「手动同步」。结果会显示 `上传/删除/跳过/失败` 统计。
+In manual mode, open the config dialog and click **Manual Sync**. Results are reported as `uploaded / deleted / skipped / failed` counts.
 
-### 覆盖本地
+### Override Local
 
-点击「覆盖本地」将远端所有文件覆盖到本地。**此操作不可逆**，请提前备份重要数据。
+Click **Override Local** to pull all remote files and replace your local copies. **This is irreversible** — back up important data first.
 
-## 配置说明
+## Configuration Reference
 
-### 必选
+### Required
 
-| 配置项 | 说明 |
-|-------|------|
-| GitHub 仓库地址 | HTTPS 仓库 URL |
-| 分支名称 | 同步分支 |
-| Personal Access Token | 需 `repo` 权限 |
-| Commit 信息模板 | 支持 `{{date}}` |
-| 笔记目录 | 逗号分隔，自动加 `/data/` 前缀 |
+| Item | Description |
+|------|-------------|
+| GitHub Repository URL | HTTPS repository URL |
+| Branch | Branch to sync |
+| Personal Access Token | Token with `repo` permission |
+| Commit Template | Supports `{{date}}` placeholder |
+| Notebook Directories | Comma-separated, `/data/` auto-prefixed |
 
-### 可选
+### Optional
 
-| 配置项 | 说明 | 默认值 |
-|-------|------|--------|
-| 同步模式 | `auto` 或 `manual` | `manual` |
-| 自动同步间隔 | 分钟（≥1） | — |
-| 自动关闭页面 | 操作后关闭对话框 | `false` |
+| Item | Description | Default |
+|------|-------------|---------|
+| Sync Mode | `auto` or `manual` | `manual` |
+| Sync Interval | Minutes (auto only, ≥1) | — |
+| Auto-close Dialog | Close page after operation | `false` |
 
-## 注意事项
+## Important Notes
 
-1. **PAT 令牌**：在 GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens 创建，授予 **Contents: Read and write**。
-2. **自动同步**：建议只在单台电脑上启用，避免多设备冲突。
-3. **覆盖本地**：不可逆操作，请提前备份。
-4. **同步目录**：插件自动添加 `/data/` 前缀，始终检查并同步 `assets` 目录。
+1. **PAT**: Create at GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens, grant **Contents: Read and write**.
+2. **Auto Sync**: Enable only on a single machine to avoid conflicts.
+3. **Override Local**: Irreversible — backup first.
+4. **Directories**: The plugin auto-adds `/data/` prefix and always syncs the `assets` folder.
 
-## 常见问题
+## FAQ
 
-### 同步失败？
+### Sync fails?
 
-- 检查仓库地址和分支名
-- 确认 Token 有效且有 push 权限
-- 检查网络连接
+- Check repository URL and branch name
+- Verify token is valid with push permission
+- Check network connectivity
 
-### 自动同步不工作？
+### Auto sync not working?
 
-- 确认选择了「自动同步」
-- 确认间隔 ≥ 1 分钟
-- 保持思源笔记运行
+- Confirm mode is set to "Auto"
+- Ensure interval ≥ 1 minute
+- Keep SiYuan running
 
-### 覆盖后笔记丢失？
+### Lost notes after override?
 
-- 可从 GitHub 提交历史中恢复
-- 操作前务必备份
+- Recover from GitHub commit history
+- Always backup before overriding
 
-## 开发指南
+## Development
 
-### 环境要求
+### Requirements
 
 - Node.js 18+
 - pnpm 8+
 
-### 本地开发
+### Setup
 
 ```bash
 git clone https://github.com/xdsun777/siyuan-git-sync.git
@@ -132,49 +132,49 @@ cd siyuan-git-sync
 pnpm install
 ```
 
-### 快速开发（自动部署）
+### Quick Dev (auto-deploy to workspace)
 
-创建 `.env` 文件：
+Create `.env` file:
 
 ```env
 VITE_SIYUAN_WORKSPACE_PATH=/path/to/your/siyuan/workspace
 ```
 
 ```bash
-pnpm run dev    # 监听模式，自动部署到插件目录
+pnpm run dev    # Watch mode, auto-deploy to plugins dir
 ```
 
-### 手动开发
+### Manual Dev
 
 ```bash
-pnpm run make-link    # 创建符号链接到工作空间
-pnpm run dev          # 监听模式
+pnpm run make-link    # Create symlink to workspace
+pnpm run dev          # Watch mode
 ```
 
-### 构建
+### Build
 
 ```bash
-pnpm run build        # 输出到 dist/，同时生成 package.zip
+pnpm run build        # Output to dist/, generates package.zip
 ```
 
-## 贡献指南
+## Contributing
 
-欢迎提交 Issue 和 PR。提交前请确保：
+Issues and PRs welcome. Before submitting:
 
-1. 代码符合项目风格
-2. 运行 `pnpm run build` 无错误
-3. 手动测试功能正常
-4. 必要时更新文档
+1. Follow the existing code style
+2. Run `pnpm run build` and verify zero errors
+3. Test functionality manually
+4. Update docs if needed
 
-## 许可证
+## License
 
 [MIT License](https://github.com/xdsun777/siyuan-git-sync/blob/main/LICENSE)
 
-## 联系方式
+## Links
 
-- [GitHub 仓库](https://github.com/xdsun777/siyuan-git-sync)
-- [问题反馈](https://github.com/xdsun777/siyuan-git-sync/issues)
+- [GitHub Repository](https://github.com/xdsun777/siyuan-git-sync)
+- [Issue Tracker](https://github.com/xdsun777/siyuan-git-sync/issues)
 
 ---
 
-**感谢使用 SiYuan Git Sync 插件！**
+**Thank you for using SiYuan Git Sync!**

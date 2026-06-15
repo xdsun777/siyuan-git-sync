@@ -8,7 +8,8 @@ import fg from 'fast-glob'
 import vitePluginYamlI18n from './yaml-plugin'
 import { readFileSync } from "node:fs"
 
-const pluginInfo = JSON.parse(readFileSync("./plugin.json", "utf8"))
+const pluginInfo = JSON.parse(readFileSync("./plugin.json", "utf8"));
+const PREVIEW_VERSION = `siyuan-git-sync-${pluginInfo.version}.zip`;
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd())
@@ -94,7 +95,7 @@ export default defineConfig(({ mode }) => {
                         zipPack({
                             inDir: './dist',
                             outDir: './',
-                            outFileName: 'package.zip'
+                            outFileName: PREVIEW_VERSION
                         })
                     ])
                 ],
