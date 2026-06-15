@@ -1,6 +1,6 @@
 import { showMessage } from "siyuan";
 import { readDir, getFileBlob } from "@/utils/siyuan";
-import { extractOwnerAndRepo, fetchRemoteTree, batchCommit, computeGitBlobSHA } from "@/utils/github";
+import { extractOwnerAndRepo, fetchRemoteTree, batchCommit, computeGitBlobSHA, validateToken } from "@/utils/github";
 import { RepoInfo, DialogElement, FileChange, SyncStats } from "@/types";
 import PromiseLimitPool from "@/libs/promise-pool";
 
@@ -33,6 +33,13 @@ export async function performSyncFromConfig(config: SyncConfigInput): Promise<bo
 
     try {
         const commitMessage = commitTemplate.replace(/\{\{date\}\}/g, new Date().toLocaleString());
+
+        // ──── 阶段 0: 验证 Token ────
+        const validation = await validateToken(authToken);
+        if (!validation.valid) {
+            alert(validation.error || 'Token 验证失败');
+            return false;
+        }
 
         // ──── 阶段 1: 获取远端全量文件 SHA（2 次 API）────
         msg('获取远端文件列表...');

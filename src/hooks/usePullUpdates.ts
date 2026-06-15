@@ -1,6 +1,6 @@
 import { Dialog, showMessage } from "siyuan";
 import { readDir, getFileBlob, writeFileWithDirs } from "@/utils/siyuan";
-import { extractOwnerAndRepo, fetchRemoteTree, downloadBlobBySha, computeGitBlobSHA } from "@/utils/github";
+import { extractOwnerAndRepo, fetchRemoteTree, downloadBlobBySha, computeGitBlobSHA, validateToken } from "@/utils/github";
 import { RepoInfo, DialogElement } from "@/types";
 import PromiseLimitPool from "@/libs/promise-pool";
 
@@ -34,6 +34,13 @@ export async function performPullUpdateFromConfig(config: PullConfigInput): Prom
     const alert = (text: string) => showMessage(text);
 
     try {
+        // ──── 阶段 0: 验证 Token ────
+        const validation = await validateToken(authToken);
+        if (!validation.valid) {
+            alert(validation.error || 'Token 验证失败');
+            return false;
+        }
+
         // ──── 阶段 1: 获取远端文件树 ────
         msg('获取远端文件列表...');
         const remoteTree = await fetchRemoteTree(repoInfo.owner, repoInfo.repo, branch, authToken);

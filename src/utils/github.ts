@@ -13,9 +13,10 @@ import {
 
 function getAuthHeaders(token: string): Record<string, string> {
     return {
-        'Authorization': `token ${token}`,
+        'Authorization': `Bearer ${token}`,
         'Accept': 'application/vnd.github.v3+json',
         'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28',
     };
 }
 
@@ -38,6 +39,35 @@ export async function computeGitBlobSHA(content: Uint8Array): Promise<string> {
     const hashBuffer = await crypto.subtle.digest('SHA-1', combined);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* ========== Token 验证 ========== */
+
+/**
+ * 验证 Token 是否有效（调用 /user 端点，始终需要认证）
+ */
+export async function validateToken(token: string): Promise<{ valid: boolean; error?: string }> {
+    try {
+        const resp = await fetch('https://api.github.com/user', {
+            method: 'GET',
+            headers: getAuthHeaders(token),
+        });
+        if (resp.ok) return { valid: true };
+        if (resp.status === 401) return { valid: false, error: 'Token 无效或已过期' };
+        if (resp.status === 403) {
+            // 403 可能是速率限制或权限不足
+            const rateLimitRemaining = resp.headers.get('X-RateLimit-Remaining');
+            if (rateLimitRemaining === '0') {
+                const resetTime = resp.headers.get('X-RateLimit-Reset');
+                const resetDate = resetTime ? new Date(parseInt(resetTime) * 1000).toLocaleTimeString() : '未知';
+                return { valid: false, error: `API 速率限制已达上限，请在 ${resetDate} 后重试` };
+            }
+            return { valid: false, error: 'Token 权限不足，请确认已勾选 Contents 读写权限' };
+        }
+        return { valid: false, error: `验证失败: ${resp.status}` };
+    } catch {
+        return { valid: false, error: '网络错误，无法连接 GitHub API' };
+    }
 }
 
 /* ========== 远端仓库查询（一次性获取全量文件树） ========== */

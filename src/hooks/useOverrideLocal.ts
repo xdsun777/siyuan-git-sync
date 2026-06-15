@@ -1,6 +1,6 @@
 import { showMessage } from "siyuan";
 import { writeFileWithDirs } from "@/utils/siyuan";
-import { extractOwnerAndRepo, fetchRemoteTree, downloadBlobBySha } from "@/utils/github";
+import { extractOwnerAndRepo, fetchRemoteTree, downloadBlobBySha, validateToken } from "@/utils/github";
 import { DialogElement } from "@/types";
 import PromiseLimitPool from "@/libs/promise-pool";
 
@@ -29,6 +29,13 @@ export async function performOverride(dialog: DialogElement): Promise<boolean> {
     const dirs = notesDir.split(',').map(d => d.trim()).filter(d => d !== '');
 
     try {
+        // ──── 阶段 0: 验证 Token ────
+        const validation = await validateToken(authToken);
+        if (!validation.valid) {
+            showMessage(validation.error || 'Token 验证失败');
+            return false;
+        }
+
         // ──── 阶段 1: 获取远程文件树 ────
         showMessage('获取远程文件列表...');
         const remoteTree = await fetchRemoteTree(repoInfo.owner, repoInfo.repo, branch, authToken);
