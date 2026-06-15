@@ -1,6 +1,6 @@
 {
   "name": "siyuan-git-sync",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "将思源笔记与 Git 同步",
   "repository": "https://github.com/xdsun777/siyuan-git-sync",
